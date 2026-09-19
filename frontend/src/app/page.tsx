@@ -221,7 +221,7 @@ export default function HomePage() {
           </div>
 
           <a
-            href="https://wa.me/919999999999?text=Verify"
+            href="https://wa.me/919288532901?text=Verify"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-white text-emerald-900 font-bold text-xs hover:bg-emerald-50 transition-all shadow-md flex-shrink-0 text-center min-h-[44px]"
