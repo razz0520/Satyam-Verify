@@ -82,14 +82,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#eceae6] dark:bg-[#0b132b] flex items-center justify-center p-3 sm:p-6 md:p-10 font-sans transition-colors duration-300">
+    <div className="min-h-screen bg-[#eceae6] dark:bg-[#0b132b] flex items-center justify-center px-4 py-8 sm:px-6 sm:py-10 md:p-10 font-sans transition-colors duration-300">
       {/* Outer frame matching static reference with responsive expansion */}
-      <div className="relative w-full max-w-[540px] bg-[#e6e4e0] dark:bg-[#121c38] rounded-[36px] sm:rounded-[46px] border border-[#d7d5d0] dark:border-slate-800 p-5 sm:p-9 md:p-11 shadow-[12px_12px_28px_#c7c5c1,-12px_-12px_28px_#ffffff] dark:shadow-[12px_12px_28px_#050914,-12px_-12px_28px_#192646] my-6">
+      <div className="relative w-full max-w-[500px] sm:max-w-[540px] bg-[#e6e4e0] dark:bg-[#121c38] rounded-[28px] sm:rounded-[46px] border border-[#d7d5d0] dark:border-slate-800 px-5 py-6 sm:px-9 sm:py-9 md:p-11 shadow-[12px_12px_28px_#c7c5c1,-12px_-12px_28px_#ffffff] dark:shadow-[12px_12px_28px_#050914,-12px_-12px_28px_#192646] my-4 sm:my-6">
         
         {/* Top Header Row with Status Indicator */}
-        <div className="flex items-center justify-end mb-6 sm:mb-8">
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#e6e4e0] dark:bg-[#162244] shadow-[4px_4px_8px_#c7c5c1,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-white/40 dark:border-slate-700">
-            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+        <div className="flex items-center justify-end mb-5 sm:mb-8">
+          <div className="flex items-center gap-2 px-3 py-1.5 sm:px-3.5 rounded-full bg-[#e6e4e0] dark:bg-[#162244] shadow-[4px_4px_8px_#c7c5c1,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-white/40 dark:border-slate-700">
+            <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
             <span className="text-[11px] sm:text-xs font-semibold text-[#55565a] dark:text-slate-300">
               SatyamVerify Official Portal
             </span>
@@ -97,7 +97,7 @@ export default function LoginPage() {
         </div>
 
         {/* Header Title Section */}
-        <div className="text-center mb-6 sm:mb-8 space-y-2">
+        <div className="text-center mb-6 sm:mb-8 space-y-1.5 sm:space-y-2">
           <h1 className="text-xl sm:text-2xl font-bold text-[#3a3b3e] dark:text-white tracking-tight">
             Official Publisher Access
           </h1>
@@ -122,7 +122,7 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="publisher@pib.gov.in"
-                    className="w-full h-12 sm:h-13 rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-5 text-xs sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
                   />
                 </div>
               </div>
@@ -139,13 +139,13 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter Password"
-                    className="w-full h-12 sm:h-13 rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] pl-5 pr-12 text-xs sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] pl-4 sm:pl-5 pr-11 sm:pr-12 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
-                    className="absolute right-4 text-[#8a8a8a] hover:text-[#55565a] dark:text-slate-400 dark:hover:text-slate-200 focus:outline-none transition-colors"
+                    className="absolute right-3.5 sm:right-4 text-[#8a8a8a] hover:text-[#55565a] dark:text-slate-400 dark:hover:text-slate-200 focus:outline-none transition-colors"
                   >
                     {showPassword ? (
                       <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -157,12 +157,12 @@ export default function LoginPage() {
               </div>
 
               {/* Remember Me & Forgot Password Row */}
-              <div className="flex items-center justify-between pt-1 pb-1">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <div className="flex items-center justify-between pt-1 pb-1 gap-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <button
                     type="button"
                     onClick={() => setRememberMe(!rememberMe)}
-                    className={`w-6 h-6 rounded-[7px] flex items-center justify-center transition-all ${
+                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-[6px] sm:rounded-[7px] flex items-center justify-center transition-all flex-shrink-0 ${
                       rememberMe
                         ? "bg-[#6e6e6e] dark:bg-navy-700 text-white shadow-[2px_2px_5px_#c7c5c1,-2px_-2px_5px_#ffffff] dark:shadow-[2px_2px_5px_#060a17,-2px_-2px_5px_#1f305e]"
                         : "bg-[#ffffff] dark:bg-slate-800 shadow-[3px_3px_6px_#c7c5c1,-3px_-3px_6px_#ffffff] dark:shadow-[3px_3px_6px_#060a17,-3px_-3px_6px_#1f305e]"
@@ -170,7 +170,7 @@ export default function LoginPage() {
                   >
                     {rememberMe && (
                       <svg
-                        className="w-3.5 h-3.5 stroke-current"
+                        className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-current"
                         viewBox="0 0 24 24"
                         fill="none"
                         strokeWidth="3"
@@ -194,7 +194,7 @@ export default function LoginPage() {
           ) : (
             /* MFA Verification Step */
             <div className="space-y-3">
-              <div className="p-3.5 sm:p-4 rounded-[22px] bg-[#e6e4e0] dark:bg-[#101a35] shadow-[inset_3px_3px_6px_#c7c5c1,inset_-3px_-3px_6px_#ffffff] dark:shadow-[inset_3px_3px_6px_#050812,inset_-3px_-3px_6px_#1b2746] text-xs text-[#55565a] dark:text-slate-300 flex items-start gap-3 border border-white/30 dark:border-slate-800">
+              <div className="p-3.5 sm:p-4 rounded-[20px] sm:rounded-[22px] bg-[#e6e4e0] dark:bg-[#101a35] shadow-[inset_3px_3px_6px_#c7c5c1,inset_-3px_-3px_6px_#ffffff] dark:shadow-[inset_3px_3px_6px_#050812,inset_-3px_-3px_6px_#1b2746] text-xs text-[#55565a] dark:text-slate-300 flex items-start gap-2.5 sm:gap-3 border border-white/30 dark:border-slate-800">
                 <Key className="w-4 h-4 text-[#6e6e6e] dark:text-sky-400 flex-shrink-0 mt-0.5" />
                 <p className="leading-relaxed">
                   Enter your <strong>6-digit Authenticator TOTP code</strong> to verify two-factor administrative authorization.
@@ -214,7 +214,7 @@ export default function LoginPage() {
                     value={mfaCode}
                     onChange={(e) => setMfaCode(e.target.value)}
                     placeholder="123456"
-                    className="w-full h-12 sm:h-13 rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-5 text-center text-sm sm:text-base tracking-[0.3em] font-mono text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-center text-sm sm:text-base tracking-[0.3em] font-mono text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
                   />
                 </div>
               </div>
@@ -225,7 +225,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full h-13 sm:h-14 rounded-[28px] bg-[#6e6e6e] hover:bg-[#585858] dark:bg-navy-800 dark:hover:bg-navy-700 text-white font-medium text-sm sm:text-base shadow-[6px_6px_14px_#c7c5c1,-6px_-6px_14px_#ffffff] dark:shadow-[6px_6px_14px_#050812,-6px_-6px_14px_#192646] hover:shadow-[3px_3px_8px_#c7c5c1,-3px_-3px_8px_#ffffff] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
+            className="w-full h-12 sm:h-14 rounded-[24px] sm:rounded-[28px] bg-[#6e6e6e] hover:bg-[#585858] dark:bg-navy-800 dark:hover:bg-navy-700 text-white font-medium text-sm sm:text-base shadow-[6px_6px_14px_#c7c5c1,-6px_-6px_14px_#ffffff] dark:shadow-[6px_6px_14px_#050812,-6px_-6px_14px_#192646] hover:shadow-[3px_3px_8px_#c7c5c1,-3px_-3px_8px_#ffffff] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
           >
             {loading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -239,19 +239,19 @@ export default function LoginPage() {
         </form>
 
         {/* Divider Text */}
-        <div className="my-6 text-center">
+        <div className="my-5 sm:my-6 text-center">
           <span className="text-xs sm:text-sm text-[#8a8a8a] dark:text-slate-500 font-normal">
             or sign in with
           </span>
         </div>
 
         {/* Social Authentication Button */}
-        <div className="flex justify-center mb-6">
+        <div className="flex justify-center mb-5 sm:mb-6">
           <button
             type="button"
             onClick={handleGoogleAuth}
             aria-label="Sign in with Google"
-            className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-[#e6e4e0] dark:bg-[#162244] flex items-center justify-center shadow-[4px_4px_8px_#c9c7c3,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-[#f2f1ee] dark:border-slate-700 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#e6e4e0] dark:bg-[#162244] flex items-center justify-center shadow-[4px_4px_8px_#c9c7c3,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-[#f2f1ee] dark:border-slate-700 hover:scale-105 active:scale-95 transition-all cursor-pointer"
           >
             <span className="font-bold text-lg sm:text-xl text-[#2c2c2c] dark:text-white font-serif">
               G
@@ -260,12 +260,12 @@ export default function LoginPage() {
         </div>
 
         {/* Bottom Navigation Row: Register Organization link */}
-        <div className="text-center pt-2 border-t border-black/5 dark:border-white/5">
+        <div className="text-center pt-3 sm:pt-2 border-t border-black/5 dark:border-white/5">
           <p className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400">
             Need a new publisher account?{" "}
             <Link
               href="/register"
-              className="font-semibold text-[#3a3b3e] dark:text-sky-400 hover:underline ml-1"
+              className="font-semibold text-[#3a3b3e] dark:text-sky-400 hover:underline inline-block mt-0.5 sm:mt-0 sm:ml-1"
             >
               Register Organization
             </Link>

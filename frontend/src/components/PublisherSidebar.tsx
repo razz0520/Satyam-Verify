@@ -36,10 +36,10 @@ export function PublisherSidebar() {
     .join("")
     .toUpperCase() || "GOV";
 
-  const isOverview = pathname === "/dashboard";
-  const isRegister = pathname === "/dashboard/register-content";
-  const isPublications = pathname === "/dashboard/content";
-  const isCredentials = pathname === "/dashboard/credentials";
+  const isOverview = pathname === "/dashboard" || pathname === "/dashboard/";
+  const isRegister = pathname === "/dashboard/register-content" || pathname === "/dashboard/register-content/";
+  const isPublications = pathname === "/dashboard/content" || pathname === "/dashboard/content/";
+  const isCredentials = pathname === "/dashboard/credentials" || pathname === "/dashboard/credentials/";
 
   // Auto-close mobile drawer on route change
   useEffect(() => {
@@ -147,7 +147,7 @@ export function PublisherSidebar() {
 
               <Link
                 href="/dashboard"
-                prefetch={true}
+                prefetch={false}
                 className={`nav-item ${isOverview ? "active" : ""}`}
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -157,7 +157,7 @@ export function PublisherSidebar() {
 
               <Link
                 href="/dashboard/register-content"
-                prefetch={true}
+                prefetch={false}
                 className={`nav-item ${isRegister ? "active" : ""}`}
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -167,7 +167,7 @@ export function PublisherSidebar() {
 
               <Link
                 href="/dashboard/content"
-                prefetch={true}
+                prefetch={false}
                 className={`nav-item ${isPublications ? "active" : ""}`}
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -177,7 +177,7 @@ export function PublisherSidebar() {
 
               <Link
                 href="/dashboard/credentials"
-                prefetch={true}
+                prefetch={false}
                 className={`nav-item ${isCredentials ? "active" : ""}`}
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -190,7 +190,7 @@ export function PublisherSidebar() {
               <p>Citizen Tools</p>
               <Link
                 href="/"
-                prefetch={true}
+                prefetch={false}
                 className="nav-item"
                 onClick={() => setMobileMenuOpen(false)}
               >
@@ -292,7 +292,7 @@ export function PublisherSidebar() {
 
             <Link
               href="/dashboard"
-              prefetch={true}
+              prefetch={false}
               className={`nav-item ${isOverview ? "active" : ""}`}
               id="nav-overview-btn"
             >
@@ -302,7 +302,7 @@ export function PublisherSidebar() {
 
             <Link
               href="/dashboard/register-content"
-              prefetch={true}
+              prefetch={false}
               className={`nav-item ${isRegister ? "active" : ""}`}
               id="nav-register-btn"
             >
@@ -312,7 +312,7 @@ export function PublisherSidebar() {
 
             <Link
               href="/dashboard/content"
-              prefetch={true}
+              prefetch={false}
               className={`nav-item ${isPublications ? "active" : ""}`}
               id="nav-publications-btn"
             >
@@ -322,7 +322,7 @@ export function PublisherSidebar() {
 
             <Link
               href="/dashboard/credentials"
-              prefetch={true}
+              prefetch={false}
               className={`nav-item ${isCredentials ? "active" : ""}`}
               id="nav-credentials-btn"
             >
@@ -333,7 +333,7 @@ export function PublisherSidebar() {
 
           <div className="nav-section citizen">
             <p>Citizen Tools</p>
-            <Link href="/" prefetch={true} className="nav-item" id="nav-public-verifier-btn">
+            <Link href="/" prefetch={false} className="nav-item" id="nav-public-verifier-btn">
               <span className="nav-with-icon">
                 <Scan style={{ width: 18, height: 18 }} />
                 <span>Public Verifier</span>
