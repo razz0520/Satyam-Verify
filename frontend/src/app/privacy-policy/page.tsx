@@ -327,13 +327,25 @@ export default function PrivacyPolicyPage() {
       {/* Reusable Public Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400 px-4 sm:px-6 mt-12">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
-          <p>© 2026 National Content Provenance & Verification Authority. All rights reserved.</p>
-          <div className="flex items-center gap-6">
+          <p>© 2026 National Content Provenance &amp; Verification Authority. All rights reserved.</p>
+          <div className="flex flex-wrap items-center justify-center gap-6">
             <Link
               href="/privacy-policy"
               className="text-slate-900 dark:text-white font-semibold underline-offset-4 hover:underline"
             >
               Privacy Policy
+            </Link>
+            <Link
+              href="/terms"
+              className="hover:text-slate-900 dark:hover:text-white transition-colors underline-offset-4 hover:underline"
+            >
+              Terms of Service
+            </Link>
+            <Link
+              href="/data-deletion"
+              className="hover:text-slate-900 dark:hover:text-white transition-colors underline-offset-4 hover:underline"
+            >
+              Data Deletion
             </Link>
             <Link
               href="/"
