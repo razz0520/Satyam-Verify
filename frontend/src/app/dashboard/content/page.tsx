@@ -1,45 +1,85 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Badge } from "@/components/Badge";
-import { TableSkeleton } from "@/components/LoadingSkeleton";
+import { createPortal } from "react-dom";
 import { api } from "@/services/api";
+import { usePublisherStore } from "@/services/publisherStore";
 import { toast } from "sonner";
 import {
+  Film,
+  Music,
+  Image as ImageIcon,
   FileText,
-  Search,
-  Filter,
+  Type,
+  ShieldOff,
   Eye,
-  RefreshCw,
-  Ban,
-  ShieldCheck,
-  CheckCircle2,
+  ChevronDown,
+  AlertTriangle,
   X,
-  ExternalLink,
 } from "lucide-react";
+import { ProvenanceInspectionModal } from "@/components/ProvenanceInspectionModal";
 
-export default function ContentListPage() {
-  const [contentList, setContentList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function PublicationsRegistryPage() {
+  const { publicationsList, setPublicationsList } = usePublisherStore();
+  const [contentList, setContentList] = useState<any[]>(publicationsList);
+  const [loading, setLoading] = useState(publicationsList.length === 0);
   const [searchTerm, setSearchTerm] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [selectedItem, setSelectedItem] = useState<any | null>(null);
-  const [revokeModalItem, setRevokeModalItem] = useState<any | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Modals
+  const [inspectItem, setInspectItem] = useState<any | null>(null);
+  const [revokeItem, setRevokeItem] = useState<any | null>(null);
   const [revokeReason, setRevokeReason] = useState("");
-  const [revoking, setRevoking] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Lock background scroll when revoke modal is open
+  useEffect(() => {
+    if (!revokeItem) return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const mainContentEls = document.querySelectorAll<HTMLElement>(".main-content");
+    const prevMainOverflows = Array.from(mainContentEls).map((el) => el.style.overflowY);
+
+    document.body.style.overflow = "hidden";
+    mainContentEls.forEach((el) => {
+      el.style.overflowY = "hidden";
+    });
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setRevokeItem(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      mainContentEls.forEach((el, i) => {
+        el.style.overflowY = prevMainOverflows[i] || "";
+      });
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [revokeItem]);
 
   const fetchContent = async () => {
-    setLoading(true);
+    if (contentList.length === 0) setLoading(true);
     try {
       let url = "/content?limit=50";
       if (typeFilter) url += `&content_type=${typeFilter}`;
       if (statusFilter) url += `&status=${statusFilter}`;
       const res = await api.get(url);
-      setContentList(res.data.items || []);
+      const items = res.data.items || [];
+      setContentList(items);
+      setPublicationsList(items);
     } catch (err) {
-      console.error(err);
-      toast.error("Failed to load publications.");
+      console.error("Failed to load publications", err);
+      if (contentList.length === 0) toast.error("Failed to load publications from server.");
     } finally {
       setLoading(false);
     }
@@ -49,285 +89,283 @@ export default function ContentListPage() {
     fetchContent();
   }, [typeFilter, statusFilter]);
 
-  const handleRevoke = async () => {
-    if (!revokeModalItem || !revokeReason.trim()) {
-      toast.error("Please specify a revocation reason.");
+  const handleRevokeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!revokeItem || !revokeReason.trim()) {
+      toast.error("Please enter a revocation reason.");
       return;
     }
 
-    setRevoking(true);
+    setIsRevoking(true);
     try {
-      await api.put(`/content/${revokeModalItem.id}/revoke`, {
+      await api.put(`/content/${revokeItem.id}/revoke`, {
         reason: revokeReason.trim(),
       });
-      toast.success("Publication successfully revoked.");
-      setRevokeModalItem(null);
+      toast.success(`Revoked official authenticity for "${revokeItem.original_filename}".`);
+      setRevokeItem(null);
       setRevokeReason("");
       fetchContent();
     } catch (err: any) {
       console.error(err);
-      toast.error(err.response?.data?.message || "Revocation failed.");
+      toast.error(err.response?.data?.message || err.response?.data?.detail || "Revocation failed.");
     } finally {
-      setRevoking(false);
+      setIsRevoking(false);
+    }
+  };
+
+  const getMediaIcon = (type: string) => {
+    switch (type?.toUpperCase()) {
+      case "VIDEO":
+        return <Film style={{ width: 19, height: 19 }} />;
+      case "AUDIO":
+        return <Music style={{ width: 19, height: 19 }} />;
+      case "IMAGE":
+        return <ImageIcon style={{ width: 19, height: 19 }} />;
+      case "TEXT":
+        return <Type style={{ width: 19, height: 19 }} />;
+      default:
+        return <FileText style={{ width: 19, height: 19 }} />;
     }
   };
 
   const filteredItems = contentList.filter((item) => {
     const term = searchTerm.toLowerCase();
     return (
-      item.original_filename.toLowerCase().includes(term) ||
-      item.sha256_hash.toLowerCase().includes(term)
+      (item.original_filename && item.original_filename.toLowerCase().includes(term)) ||
+      (item.sha256_hash && item.sha256_hash.toLowerCase().includes(term))
     );
   });
 
   return (
-    <div className="space-y-5 sm:space-y-6 max-w-7xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-            Publications Registry
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Browse, inspect cryptographic signatures, and manage content lifecycle
-          </p>
-        </div>
+    <section id="view-publications" className="tab-page active-view">
+      <header className="page-header">
+        <h1>Publications Registry</h1>
+      </header>
 
-        <button
-          onClick={fetchContent}
-          className="p-2 sm:p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors w-full sm:w-fit min-h-[40px]"
-        >
-          <RefreshCw className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>Refresh List</span>
-        </button>
-      </div>
-
-      {/* Filters & Search Toolbar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-        {/* Search */}
-        <div className="relative">
-          <Search className="h-4 w-4 text-slate-400 absolute left-3 top-3" />
+      <div className="content-card panel">
+        {/* Filter Toolbar */}
+        <div className="filter-toolbar-custom">
           <input
             type="text"
+            className="custom-field"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by filename or hash..."
-            className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
+            placeholder="Search by filename or SHA-256 hash..."
           />
+
+          <div className="select-wrapper">
+            <select
+              className="filter-select"
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+            >
+              <option value="">All Content Types</option>
+              <option value="VIDEO">Video Broadcast</option>
+              <option value="AUDIO">Audio Speech</option>
+              <option value="PDF">Gazette / PDF</option>
+              <option value="IMAGE">Image</option>
+              <option value="TEXT">Press Release</option>
+            </select>
+            <ChevronDown className="select-arrow" />
+          </div>
+
+          <div className="select-wrapper">
+            <select
+              className="filter-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">All Statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="REVOKED">Revoked</option>
+              <option value="SUPERSEDED">Superseded</option>
+            </select>
+            <ChevronDown className="select-arrow" />
+          </div>
         </div>
 
-        {/* Type Filter */}
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="rounded-xl px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
-        >
-          <option value="">All Content Types</option>
-          <option value="IMAGE">Image</option>
-          <option value="VIDEO">Video</option>
-          <option value="AUDIO">Audio</option>
-          <option value="PDF">PDF</option>
-          <option value="TEXT">Text</option>
-        </select>
+        {/* Publication List */}
+        <div className="publication-list">
+          {loading ? (
+            <div style={{ padding: "36px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" }}>
+              Querying registered publication records...
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div style={{ padding: "48px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" }}>
+              No publications found matching your search and filter criteria.
+            </div>
+          ) : (
+            filteredItems.map((item) => {
+              const isRevoked = item.status === "REVOKED";
+              const shortHash = item.sha256_hash
+                ? `${item.sha256_hash.substring(0, 8)}...${item.sha256_hash.substring(item.sha256_hash.length - 3)}`
+                : "None";
+              const formattedDate = item.created_at
+                ? new Date(item.created_at).toLocaleDateString()
+                : "Live";
 
-        {/* Status Filter */}
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-xl px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
-        >
-          <option value="">All Statuses</option>
-          <option value="ACTIVE">Active</option>
-          <option value="SUPERSEDED">Superseded</option>
-          <option value="REVOKED">Revoked</option>
-        </select>
-      </div>
-
-      {/* Publications Table */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-4">
-        {loading ? (
-          <TableSkeleton rows={6} />
-        ) : filteredItems.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 text-xs">
-            No publications found matching current filters.
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-            <table className="w-full text-left text-xs min-w-[650px]">
-              <thead className="text-[11px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">Filename</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Size</th>
-                  <th className="py-3 px-4">SHA-256 Hash</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Created</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredItems.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-                  >
-                    <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white max-w-[180px] truncate">
-                      {item.original_filename}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono uppercase text-slate-500">
-                      {item.content_type}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
-                      {(item.file_size / (1024 * 1024)).toFixed(2)} MB
-                    </td>
-                    <td className="py-3.5 px-4 hash-font text-slate-600 dark:text-slate-300">
-                      {item.sha256_hash.substring(0, 16)}...
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <Badge variant={item.status}>{item.status}</Badge>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : "-"}
-                    </td>
-                    <td className="py-3.5 px-4 text-right space-x-1 sm:space-x-2 whitespace-nowrap">
-                      <button
-                        onClick={() => setSelectedItem(item)}
-                        title="View Metadata & Hashes"
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-colors"
-                        aria-label="View Details"
+              return (
+                <div key={item.id} className="publication-row">
+                  <div className="publication-main">
+                    <div className="file-icon">{getMediaIcon(item.content_type)}</div>
+                    <div className="publication-copy">
+                      <p
+                        style={
+                          isRevoked
+                            ? { textDecoration: "line-through", color: "var(--text-secondary)" }
+                            : undefined
+                        }
                       >
-                        <Eye className="h-4 w-4" />
+                        {item.original_filename}
+                      </p>
+                      <div className="publication-meta">
+                        <span className="type-tag">{item.content_type || "MEDIA"}</span>
+                        <span className="hash">{shortHash}</span>
+                        <span className="hash">{formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="publication-actions">
+                    <span className={`status ${isRevoked ? "revoked" : ""}`}>
+                      <i></i> {item.status || "ACTIVE"}
+                    </span>
+
+                    {!isRevoked && (
+                      <button
+                        className="action-revoke-btn"
+                        title="Revoke Publication"
+                        aria-label="Revoke Publication"
+                        onClick={() => setRevokeItem(item)}
+                        type="button"
+                      >
+                        <ShieldOff style={{ width: 14, height: 14 }} />
                       </button>
-                      {item.status === "ACTIVE" && (
-                        <button
-                          onClick={() => setRevokeModalItem(item)}
-                          title="Revoke Content"
-                          className="p-1.5 rounded-lg text-crimson-500 hover:bg-crimson-50 dark:hover:bg-crimson-950/50 transition-colors"
-                          aria-label="Revoke Content"
-                        >
-                          <Ban className="h-4 w-4" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                    )}
+
+                    <button
+                      className="action-eye-btn"
+                      title="Inspect Hash Proof"
+                      onClick={() => setInspectItem(item)}
+                      type="button"
+                      aria-label="Inspect Proof"
+                    >
+                      <Eye style={{ width: 14, height: 14 }} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
 
-      {/* Detail Inspection Modal */}
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3.5 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 sm:space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                Content Provenance Details
-              </h3>
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label="Close Modal"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-semibold text-[10px] uppercase">1. Content & Filename</span>
-                  <Badge variant={selectedItem.status}>{selectedItem.status}</Badge>
-                </div>
-                <p className="font-semibold text-slate-900 dark:text-white mt-0.5 break-all">{selectedItem.original_filename}</p>
-                <p className="text-[11px] text-slate-400 mt-0.5 font-mono">ID: {selectedItem.id}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">2. SHA-256 Cryptographic Hash</span>
-                <p className="hash-font text-slate-900 dark:text-slate-200 break-all mt-0.5 select-all">{selectedItem.sha256_hash}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">3. Perceptual Fingerprint (pHash / MFCC)</span>
-                <pre className="hash-font text-[11px] text-slate-900 dark:text-slate-200 break-all mt-0.5 bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-750 overflow-x-auto">
-                  {JSON.stringify(selectedItem.perceptual_hash, null, 2)}
-                </pre>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-400 font-semibold text-[10px] uppercase">4. Content Type & Size</span>
-                  <p className="font-semibold text-slate-900 dark:text-white mt-0.5 uppercase">{selectedItem.content_type} ({(selectedItem.file_size / (1024 * 1024)).toFixed(2)} MB)</p>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-400 font-semibold text-[10px] uppercase">5. Registered Timestamp</span>
-                  <p className="font-semibold text-slate-900 dark:text-white mt-0.5">{selectedItem.created_at ? new Date(selectedItem.created_at).toLocaleString() : "-"}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-navy-800 text-white text-xs font-semibold hover:bg-navy-700 min-h-[40px]"
-              >
-                Close Details
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Provenance Inspection Modal */}
+      {inspectItem && (
+        <ProvenanceInspectionModal
+          item={inspectItem}
+          onClose={() => setInspectItem(null)}
+        />
       )}
 
       {/* Revocation Confirmation Modal */}
-      {revokeModalItem && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3.5 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-md w-full border border-crimson-200 dark:border-crimson-800 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center gap-3 text-crimson-600">
-              <Ban className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" />
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                Confirm Content Revocation
-              </h3>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Are you sure you want to revoke official authenticity for <strong>{revokeModalItem.original_filename}</strong>? Future citizen verifications will return <strong>PROVEN_INVALID</strong>.
-            </p>
+      {revokeItem &&
+        mounted &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            onClick={() => setRevokeItem(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="revoke-modal-title"
+          >
+            <div
+              className="modal-dialog-card"
+              style={{
+                maxWidth: "440px",
+                padding: "22px 24px",
+                gap: "16px",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", color: "#ef4444" }}>
+                  <ShieldOff style={{ width: 20, height: 20 }} />
+                  <div>
+                    <h3 id="revoke-modal-title" style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "var(--text-primary)" }}>
+                      Revoke Official Content
+                    </h3>
+                    <span style={{ fontSize: "11px", color: "var(--text-secondary)", wordBreak: "break-all" }}>
+                      {revokeItem.original_filename}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  className="icon-button"
+                  onClick={() => setRevokeItem(null)}
+                  aria-label="Close modal"
+                  type="button"
+                  style={{ width: "30px", height: "30px" }}
+                >
+                  <X style={{ width: 16, height: 16 }} />
+                </button>
+              </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Revocation Reason *
-              </label>
-              <textarea
-                rows={3}
-                value={revokeReason}
-                onChange={(e) => setRevokeReason(e.target.value)}
-                placeholder="e.g., Publication retracted due to revised statistics"
-                className="w-full rounded-xl p-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-crimson-500 text-slate-900 dark:text-white"
-              />
-            </div>
+              <form onSubmit={handleRevokeSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                <div className="input-group" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <label className="input-label" style={{ fontSize: "11.5px", fontWeight: 700, color: "var(--text-primary)" }}>
+                    Revocation Reason <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <textarea
+                    className="custom-field"
+                    required
+                    rows={2}
+                    value={revokeReason}
+                    onChange={(e) => setRevokeReason(e.target.value)}
+                    placeholder="Enter reason..."
+                    style={{ minHeight: "68px", resize: "none", fontSize: "12px", padding: "10px 14px", borderRadius: "12px" }}
+                    autoFocus
+                  />
+                </div>
 
-            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 pt-2">
-              <button
-                onClick={() => {
-                  setRevokeModalItem(null);
-                  setRevokeReason("");
-                }}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 text-center min-h-[40px]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRevoke}
-                disabled={revoking}
-                className="px-4 py-2.5 rounded-xl bg-crimson-600 hover:bg-crimson-700 text-white text-xs font-semibold transition-colors disabled:opacity-50 text-center min-h-[40px]"
-              >
-                {revoking ? "Revoking..." : "Confirm Revoke"}
-              </button>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", paddingTop: "2px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setRevokeItem(null)}
+                    className="primary-button"
+                    style={{
+                      background: "var(--bg-well)",
+                      color: "var(--text-primary)",
+                      boxShadow: "var(--well-shadow)",
+                      minHeight: "36px",
+                      padding: "0 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isRevoking}
+                    className="primary-button"
+                    style={{
+                      background: "#ef4444",
+                      color: "#ffffff",
+                      minHeight: "36px",
+                      padding: "0 16px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {isRevoking ? "Revoking..." : "Confirm Revocation"}
+                  </button>
+                </div>
+              </form>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+          </div>,
+          document.body
+        )}
+    </section>
   );
 }

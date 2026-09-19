@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/services/authStore";
-import { Sidebar } from "@/components/Sidebar";
-import { Header } from "@/components/Header";
+import { AdminSidebar } from "@/components/AdminSidebar";
+import "@/styles/admin.css";
+import Image from "next/image";
+import { Menu } from "lucide-react";
 
 export default function AdminLayout({
   children,
@@ -13,6 +15,7 @@ export default function AdminLayout({
 }) {
   const router = useRouter();
   const { user, isAuthenticated, isLoading } = useAuthStore();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoading) {
@@ -26,19 +29,48 @@ export default function AdminLayout({
 
   if (isLoading || user?.role !== "ADMIN") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="w-8 h-8 border-4 border-navy-800 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-[#f3f5f4]">
+        <div className="w-8 h-8 border-4 border-[#0d3829] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex bg-slate-50 dark:bg-slate-950">
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
-        <Header />
-        <main className="flex-1 p-3.5 sm:p-6 md:p-8 overflow-y-auto w-full">{children}</main>
+    <div className="admin-shell">
+      {/* Mobile Top Bar */}
+      <div className="mobile-top-bar">
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Image
+              src="/satyam-verify-logo.png"
+              alt="SatyamVerify Admin Logo"
+              width={34}
+              height={34}
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
+          </div>
+          <strong style={{ fontSize: "14px", color: "var(--text-main)" }}>
+            SatyamVerify Admin
+          </strong>
+        </div>
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          type="button"
+          aria-label="Toggle navigation"
+        >
+          <Menu style={{ width: 20, height: 20 }} />
+        </button>
       </div>
+
+      <AdminSidebar
+        mobileOpen={mobileOpen}
+        onCloseMobile={() => setMobileOpen(false)}
+      />
+
+      <main className="main-viewport">
+        {children}
+      </main>
     </div>
   );
 }

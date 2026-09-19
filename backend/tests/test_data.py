@@ -83,6 +83,45 @@ def generate_sample_audio(duration_sec: float = 1.5, sample_rate: int = 16000, f
     return buffer.getvalue()
 
 
+def generate_modified_audio(
+    original_wav_bytes: bytes,
+    alteration_freq: float = 660.0,
+    alteration_mix: float = 0.30,
+) -> bytes:
+    """
+    Generate an altered / modified version of an authentic audio file
+    (e.g., simulating voice dubbing, localized edit, or acoustic alteration).
+    """
+    if len(original_wav_bytes) <= 44:
+        return original_wav_bytes
+
+    header = original_wav_bytes[:44]
+    data = original_wav_bytes[44:]
+    sample_rate = struct.unpack("<I", header[24:28])[0] or 16000
+    num_samples = len(data) // 2
+    samples = struct.unpack(f"<{num_samples}h", data)
+
+    mod_samples = []
+    for i, s in enumerate(samples):
+        # Alteration: inject secondary harmonic / dubbing frequency in middle portion
+        if num_samples // 4 <= i <= 3 * num_samples // 4:
+            alt = int(32767.0 * alteration_mix * math.sin(2.0 * math.pi * alteration_freq * i / sample_rate))
+            mod_s = int(s * (1.0 - alteration_mix) + alt)
+        else:
+            mod_s = s
+        mod_samples.append(max(-32768, min(32767, mod_s)))
+
+    buffer = io.BytesIO()
+    buffer.write(header[:4])
+    buffer.write(struct.pack("<I", 36 + len(mod_samples) * 2))
+    buffer.write(header[8:40])
+    buffer.write(struct.pack("<I", len(mod_samples) * 2))
+    for s in mod_samples:
+        buffer.write(struct.pack("<h", s))
+
+    return buffer.getvalue()
+
+
 def generate_sample_pdf(title: str = "Government Gazette Notification No. 101/2026 Ministry of Finance") -> bytes:
     """Generate a valid, standards-compliant PDF 1.4 document stream with extractable text."""
     safe_title = title.replace("(", "[").replace(")", "]")

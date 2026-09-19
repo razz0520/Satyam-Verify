@@ -20,13 +20,16 @@ from app.core.context import get_current_request_id
 from app.core.hash_service import (
     calculate_bytes_hash,
     calculate_file_hash,
+    compare_audio_fingerprints,
     compare_pdf_fingerprints,
     compare_perceptual_hashes,
     generate_audio_fingerprint,
+    generate_audio_fingerprint_dict,
     generate_image_dhash,
     generate_image_phash,
     generate_pdf_fingerprint,
     generate_video_phash,
+    verify_candidate_block,
     verify_chain,
 )
 from app.core.signature_service import validate_manifest, verify_signature
@@ -37,6 +40,7 @@ from app.models.database import (
     ContentType,
     Credential,
     CredentialStatus,
+    HashChainEntry,
     RegisteredContent,
     User,
     VerificationAttempt,
@@ -66,10 +70,7 @@ class VerificationService:
             elif ext in ["mp4", "avi", "mov", "mkv", "webm", "3gp", "flv"]:
                 return generate_video_phash(file_path, fps=2.0)
             elif ext in ["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"]:
-                return {
-                    "algorithm": "MFCC + Chroma Fingerprint",
-                    "audio_fingerprint": generate_audio_fingerprint(file_path),
-                }
+                return generate_audio_fingerprint_dict(file_path)
             elif ext in ["pdf"]:
                 return generate_pdf_fingerprint(file_path)
             else:
@@ -230,10 +231,10 @@ class VerificationService:
                     evidence_bundle["perceptual_match_status"] = "EXACT_MATCH"
                     evidence_bundle["perceptual_similarity_score"] = 100.0
 
-                # Validate Hash Chain Anchor
-                chain_valid, _ = verify_chain(db)
-                evidence_bundle["chain_block_id"] = chain_entry.id if chain_entry else None
-                evidence_bundle["chain_integrity"] = bool(chain_entry is not None and chain_valid)
+                # Validate Candidate Hash Chain Anchor
+                cand_chain_valid, cand_block_id = verify_candidate_block(db, matched_content.id)
+                evidence_bundle["chain_block_id"] = cand_block_id
+                evidence_bundle["chain_integrity"] = cand_chain_valid
 
                 # Validate Manifest & Ed25519 Signature
                 sig_valid = False
@@ -283,19 +284,23 @@ class VerificationService:
                         verdict = VerificationVerdict.VERIFIED
                         confidence_score = 1.0
                         evidence_bundle["notice"] = "Cryptographically signed and anchored to the government provenance ledger."
-                    elif (sig_valid or manifest_valid) and cred_active:
-                        verdict = VerificationVerdict.VERIFIED
-                        confidence_score = 0.95
-                        evidence_bundle["notice"] = "Valid publisher signature detected in registry."
+                    elif not evidence_bundle["chain_integrity"]:
+                        verdict = VerificationVerdict.PROVEN_INVALID
+                        confidence_score = 0.90
+                        evidence_bundle["notice"] = "Provenance ledger integrity check failed: content hash-chain anchor is missing, broken, or tampered."
                     else:
                         verdict = VerificationVerdict.PROVEN_INVALID
                         confidence_score = 0.85
                         evidence_bundle["notice"] = "Cryptographic signature validation or credential trust failed for this registered content."
                 elif matched_content.status == ContentStatus.SUPERSEDED:
-                    if cred_active:
+                    if cred_active and evidence_bundle["chain_integrity"] and sig_valid and manifest_valid:
                         verdict = VerificationVerdict.VERIFIED
                         confidence_score = 0.95
                         evidence_bundle["notice"] = "Content is authentic but has been superseded by an updated version."
+                    elif not evidence_bundle["chain_integrity"]:
+                        verdict = VerificationVerdict.PROVEN_INVALID
+                        confidence_score = 0.90
+                        evidence_bundle["notice"] = "Provenance ledger integrity check failed for superseded content."
                     else:
                         verdict = VerificationVerdict.PROVEN_INVALID
                         confidence_score = 0.95
@@ -311,7 +316,8 @@ class VerificationService:
                 if submitted_phash.get("status") != "NOT_APPLICABLE" and submitted_phash.get("status") != "FAILED":
                     req_id = get_current_request_id() or "-"
                     perceptual_candidates = db.execute(
-                        select(RegisteredContent).where(RegisteredContent.status == ContentStatus.ACTIVE)
+                        select(RegisteredContent)
+                        .order_by(desc(RegisteredContent.created_at), desc(RegisteredContent.id))
                     ).scalars().all()
 
                     logger.info(
@@ -322,8 +328,7 @@ class VerificationService:
                         submitted_phash.get("status", "OK"),
                     )
 
-                    best_match: Optional[RegisteredContent] = None
-                    best_score = 0.0
+                    matching_candidates: List[Tuple[RegisteredContent, float]] = []
 
                     for candidate in perceptual_candidates:
                         cand_phash = candidate.perceptual_hash
@@ -333,6 +338,21 @@ class VerificationService:
                             stored_path = Path(settings.PROCESSED_DIR) / candidate.stored_filename
                             if stored_path.exists():
                                 cand_phash = generate_pdf_fingerprint(stored_path)
+                                candidate.perceptual_hash = cand_phash
+                                try:
+                                    db.commit()
+                                except Exception:
+                                    db.rollback()
+
+                        # If candidate is a registered AUDIO with legacy/missing vectors, generate on-demand from stored file
+                        if candidate.content_type == ContentType.AUDIO and (
+                            not cand_phash
+                            or not isinstance(cand_phash, dict)
+                            or not cand_phash.get("chroma_mean")
+                        ):
+                            stored_path = Path(settings.PROCESSED_DIR) / candidate.stored_filename
+                            if stored_path.exists():
+                                cand_phash = generate_audio_fingerprint_dict(stored_path)
                                 candidate.perceptual_hash = cand_phash
                                 try:
                                     db.commit()
@@ -354,9 +374,8 @@ class VerificationService:
                                     sim_d = compare_perceptual_hashes(sub_d, cand_d) if (sub_d and cand_d) else sim_p
                                     sim = round((sim_p * 0.6) + (sim_d * 0.4), 2)
                                     logger.info("[%s] Candidate %s (IMAGE): perceptual similarity score=%.2f (thresholds: verified>=95.0, suspicious>=70.0)", req_id, candidate.id, sim)
-                                    if sim > best_score:
-                                        best_score = sim
-                                        best_match = candidate
+                                    if sim >= 70.0:
+                                        matching_candidates.append((candidate, sim))
                             except Exception:
                                 pass
 
@@ -365,36 +384,60 @@ class VerificationService:
                             try:
                                 sim = compare_perceptual_hashes(submitted_phash, cand_phash)
                                 logger.info("[%s] Candidate %s (VIDEO): perceptual similarity score=%.2f (thresholds: verified>=95.0, suspicious>=70.0)", req_id, candidate.id, sim)
-                                if sim > best_score:
-                                    best_score = sim
-                                    best_match = candidate
+                                if sim >= 70.0:
+                                    matching_candidates.append((candidate, sim))
                             except Exception:
                                 pass
 
                         # Compare audio fingerprints
                         elif candidate.content_type == ContentType.AUDIO and ext in ["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"]:
                             try:
-                                sub_afp = submitted_phash.get("audio_fingerprint", "")
-                                cand_afp = cand_phash.get("audio_fingerprint", "")
-                                if sub_afp and cand_afp:
-                                    sim = compare_perceptual_hashes(sub_afp, cand_afp)
-                                    logger.info("[%s] Candidate %s (AUDIO): acoustic similarity score=%.2f (thresholds: verified>=95.0, suspicious>=70.0)", req_id, candidate.id, sim)
-                                    if sim > best_score:
-                                        best_score = sim
-                                        best_match = candidate
-                            except Exception:
-                                pass
+                                sim = compare_audio_fingerprints(submitted_phash, cand_phash)
+                                logger.info("[%s] Candidate %s (AUDIO): acoustic similarity score=%.2f (thresholds: verified>=95.0, suspicious>=70.0)", req_id, candidate.id, sim)
+                                if sim >= 70.0:
+                                    matching_candidates.append((candidate, sim))
+                            except Exception as e:
+                                logger.warning("[%s] Candidate %s (AUDIO) comparison failed: %s", req_id, candidate.id, e)
 
                         # Compare PDF document fingerprints
                         elif candidate.content_type == ContentType.PDF and ext in ["pdf"]:
                             try:
                                 sim = compare_pdf_fingerprints(submitted_phash, cand_phash)
                                 logger.info("[%s] Candidate %s (PDF): document similarity score=%.2f (thresholds: verified>=98.0, suspicious>=70.0)", req_id, candidate.id, sim)
-                                if sim > best_score:
-                                    best_score = sim
-                                    best_match = candidate
+                                if sim >= 70.0:
+                                    matching_candidates.append((candidate, sim))
                             except Exception:
                                 pass
+
+                    best_match: Optional[RegisteredContent] = None
+                    best_score = 0.0
+
+                    if matching_candidates:
+                        max_score = max(s for _, s in matching_candidates)
+                        # Group top matches: candidates within 2% of the highest score or >=95% if top score is >=95%
+                        top_candidates = [
+                            (c, s) for c, s in matching_candidates
+                            if (s >= max_score - 2.0) or (max_score >= 95.0 and s >= 95.0)
+                        ]
+
+                        # Deterministic status precedence: ACTIVE > SUPERSEDED > REVOKED
+                        active_top = [(c, s) for c, s in top_candidates if c.status == ContentStatus.ACTIVE]
+                        if active_top:
+                            active_top.sort(key=lambda x: (x[1], x[0].created_at or datetime.min, x[0].id), reverse=True)
+                            best_match, best_score = active_top[0]
+                        else:
+                            superseded_top = [(c, s) for c, s in top_candidates if c.status == ContentStatus.SUPERSEDED]
+                            if superseded_top:
+                                superseded_top.sort(key=lambda x: (x[1], x[0].created_at or datetime.min, x[0].id), reverse=True)
+                                best_match, best_score = superseded_top[0]
+                            else:
+                                revoked_top = [(c, s) for c, s in top_candidates if c.status == ContentStatus.REVOKED]
+                                if revoked_top:
+                                    revoked_top.sort(key=lambda x: (x[1], x[0].created_at or datetime.min, x[0].id), reverse=True)
+                                    best_match, best_score = revoked_top[0]
+                                else:
+                                    top_candidates.sort(key=lambda x: (x[1], x[0].created_at or datetime.min, x[0].id), reverse=True)
+                                    best_match, best_score = top_candidates[0]
 
                     logger.info(
                         "[%s] Perceptual matching result: best_match=%s, best_score=%.2f",
@@ -431,26 +474,38 @@ class VerificationService:
                                     pub_k,
                                 )
 
+                        cand_chain_valid, cand_block_id = verify_candidate_block(db, best_match.id)
+                        evidence_bundle["chain_block_id"] = cand_block_id
+                        evidence_bundle["chain_integrity"] = cand_chain_valid
+
                         cand_cred = best_match.credential
                         cand_cred_active = bool(cand_cred and cand_cred.status == CredentialStatus.ACTIVE)
                         cand_cred_revoked = bool(cand_cred and cand_cred.status == CredentialStatus.REVOKED)
                         cand_cred_suspended = bool(cand_cred and cand_cred.status == CredentialStatus.SUSPENDED)
 
                         logger.info(
-                            "[%s] Matched candidate %s credential status: %s",
+                            "[%s] Matched candidate %s credential status: %s, chain_integrity: %s",
                             req_id,
                             best_match.id,
                             cand_cred.status.value if cand_cred else "NONE",
+                            evidence_bundle["chain_integrity"],
                         )
 
                         if cand_cred_revoked or best_match.status == ContentStatus.REVOKED:
                             verdict = VerificationVerdict.PROVEN_INVALID
                             confidence_score = 1.0
-                            evidence_bundle["notice"] = "Publisher signing credential has been officially revoked by the government authority."
+                            if cand_cred_revoked:
+                                evidence_bundle["notice"] = "Publisher signing credential has been officially revoked by the government authority."
+                            else:
+                                evidence_bundle["notice"] = "Content was officially revoked by the publishing authority."
                         elif cand_cred_suspended:
                             verdict = VerificationVerdict.PROVEN_INVALID
                             confidence_score = 1.0
                             evidence_bundle["notice"] = "Publisher signing credential is currently suspended by the government authority."
+                        elif not evidence_bundle["chain_integrity"]:
+                            verdict = VerificationVerdict.PROVEN_INVALID
+                            confidence_score = 0.90
+                            evidence_bundle["notice"] = "Provenance ledger integrity check failed: matched content hash-chain anchor is missing, broken, or tampered."
                         elif best_match.content_type == ContentType.PDF:
                             # For PDF: evaluate whether content is identical re-export vs altered document
                             sub_text_h = submitted_phash.get("normalized_text_hash")

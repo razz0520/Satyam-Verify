@@ -1,169 +1,162 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { FileUploadZone } from "@/components/FileUploadZone";
 import { api } from "@/services/api";
 import { toast } from "sonner";
 import {
-  FilePlus2,
-  KeyRound,
-  ShieldCheck,
-  CheckCircle2,
-  Layers,
   Image as ImageIcon,
   Video,
   Music,
   FileText,
   Type,
   ChevronDown,
-  Sparkles,
-  ArrowRight,
-  Fingerprint,
-  AlignLeft,
   UploadCloud,
+  ShieldCheck,
+  CheckCircle2,
   X,
+  FileCheck,
 } from "lucide-react";
 
-export type ContentTypeOption = "IMAGE" | "VIDEO" | "AUDIO" | "PDF" | "TEXT";
+type ContentTypeKey = "IMAGE" | "VIDEO" | "AUDIO" | "PDF" | "TEXT";
 
 interface ContentTypeConfig {
-  id: ContentTypeOption;
-  label: string;
-  category: string;
-  description: string;
-  icon: React.ElementType;
-  acceptedTypes: string;
-  badge: string;
+  key: ContentTypeKey;
+  title: string;
+  pill: string;
+  type: "img" | "vid" | "aud" | "doc" | "txt";
+  accept: string;
 }
 
 const CONTENT_TYPES: ContentTypeConfig[] = [
   {
-    id: "IMAGE",
-    label: "Official Image / Infographic",
-    category: "Visual Media",
-    description: "Press photos, posters, circular banners, infographics",
-    icon: ImageIcon,
-    acceptedTypes: "image/png, image/jpeg, image/jpg, image/webp, image/gif",
-    badge: "PNG, JPG, WEBP",
+    key: "IMAGE",
+    title: "Official Image / Infographic",
+    pill: "PNG, JPG, WEBP",
+    type: "img",
+    accept: "image/png,image/jpeg,image/jpg,image/webp,image/gif",
   },
   {
-    id: "VIDEO",
-    label: "Video Broadcast / Clip",
-    category: "Video Media",
-    description: "Official press briefings, minister speeches, video releases",
-    icon: Video,
-    acceptedTypes: "video/mp4, video/quicktime, video/x-msvideo, video/webm, video/mkv",
-    badge: "MP4, MOV, WEBM",
+    key: "VIDEO",
+    title: "Official Video Broadcast",
+    pill: "MP4, MOV, WEBM",
+    type: "vid",
+    accept: "video/mp4,video/quicktime,video/webm,video/x-msvideo",
   },
   {
-    id: "AUDIO",
-    label: "Audio Speech / Podcast",
-    category: "Acoustic Media",
-    description: "Radio addresses, voice statements, press audio recordings",
-    icon: Music,
-    acceptedTypes: "audio/mpeg, audio/wav, audio/ogg, audio/mp4, audio/x-m4a",
-    badge: "MP3, WAV, M4A",
+    key: "AUDIO",
+    title: "Audio Speech / Statement",
+    pill: "WAV, MP3, M4A",
+    type: "aud",
+    accept: "audio/wav,audio/mpeg,audio/mp3,audio/m4a,audio/ogg",
   },
   {
-    id: "PDF",
-    label: "Official Gazette / PDF Document",
-    category: "Government Order",
-    description: "Official gazette notifications, circulars, legal decrees",
-    icon: FileText,
-    acceptedTypes: "application/pdf",
-    badge: "PDF",
+    key: "PDF",
+    title: "Official Gazette / Document",
+    pill: "PDF",
+    type: "doc",
+    accept: "application/pdf",
   },
   {
-    id: "TEXT",
-    label: "Official Press Release / Text Statement",
-    category: "Text Statement",
-    description: "Direct press releases, executive statements, notifications",
-    icon: Type,
-    acceptedTypes: "text/plain, .txt, .md",
-    badge: "DIRECT TEXT / TXT",
+    key: "TEXT",
+    title: "Official Press Release",
+    pill: "DIRECT TEXT / TXT",
+    type: "txt",
+    accept: "text/plain,.txt,.md",
   },
 ];
 
 export default function RegisterContentPage() {
   const router = useRouter();
-  const [selectedType, setSelectedType] = useState<ContentTypeOption>("IMAGE");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Text specific mode
-  const [textInputMode, setTextInputMode] = useState<"direct" | "file">("direct");
-  const [statementText, setStatementText] = useState("");
+  // Selected Content Type
+  const [selectedType, setSelectedType] = useState<ContentTypeConfig>(CONTENT_TYPES[0]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-  // File state
+  // Dynamic Media Input
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pressReleaseText, setPressReleaseText] = useState("");
 
   // Metadata
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [department, setDepartment] = useState("");
+  const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [privateKey, setPrivateKey] = useState("");
 
-  // Submission & Result
-  const [submitting, setSubmitting] = useState(false);
-  const [registeredResult, setRegisteredResult] = useState<any>(null);
+  // Submission
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [receipt, setReceipt] = useState<any | null>(null);
 
-  // Close dropdown on outside click
+  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setDropdownOpen(false);
+        setIsDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const currentConfig = CONTENT_TYPES.find((t) => t.id === selectedType) || CONTENT_TYPES[0];
-
-  const handleSelectType = (type: ContentTypeOption) => {
-    setSelectedType(type);
-    setDropdownOpen(false);
+  const handleSelectOption = (option: ContentTypeConfig) => {
+    setSelectedType(option);
+    setIsDropdownOpen(false);
     setSelectedFile(null);
-    if (type !== "TEXT") {
-      setStatementText("");
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedFile(e.target.files[0]);
     }
   };
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setSelectedFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     let fileToUpload: File | null = selectedFile;
 
-    // If TEXT mode with direct statement input
-    if (selectedType === "TEXT" && textInputMode === "direct") {
-      if (!statementText.trim()) {
-        toast.error("Please enter the official press release or statement text.");
+    if (selectedType.key === "TEXT") {
+      if (!pressReleaseText.trim()) {
+        toast.error("Please enter the official statement or press release text.");
         return;
       }
-
-      // Convert raw text into a File object with .txt extension
-      const safeTitle = (title.trim() || "statement").replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
-      const textBlob = new Blob([statementText.trim()], { type: "text/plain;charset=utf-8" });
+      const safeTitle = (title.trim() || "official_statement").replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
+      const textBlob = new Blob([pressReleaseText.trim()], { type: "text/plain;charset=utf-8" });
       fileToUpload = new File([textBlob], `${safeTitle}.txt`, { type: "text/plain" });
     } else {
       if (!fileToUpload) {
-        toast.error(`Please select or upload the official ${currentConfig.category}.`);
+        toast.error(`Please select or upload the official file for ${selectedType.title}.`);
         return;
       }
     }
 
-    setSubmitting(true);
+    if (!title.trim()) {
+      toast.error("Please enter a publication title.");
+      return;
+    }
+
+    setIsSubmitting(true);
 
     try {
       const formData = new FormData();
       formData.append("file", fileToUpload);
 
       const metadataPayload = {
-        title: title.trim() || fileToUpload.name,
-        content_type: selectedType,
+        title: title.trim(),
+        content_type: selectedType.key,
         description: description.trim() || null,
         department: department.trim() || null,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
@@ -180,401 +173,454 @@ export default function RegisterContentPage() {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      setRegisteredResult(res.data);
-      toast.success("Official content cryptographically registered and anchored!");
+      setReceipt(res.data);
+      toast.success("Content cryptographically registered and anchored!");
     } catch (err: any) {
       console.error(err);
-      toast.error(err.response?.data?.message || "Content registration failed.");
+      toast.error(err.response?.data?.message || err.response?.data?.detail || "Content registration failed.");
     } finally {
-      setSubmitting(false);
+      setIsSubmitting(false);
     }
   };
 
-  const ActiveIcon = currentConfig.icon;
+  const renderIcon = (key: ContentTypeKey) => {
+    switch (key) {
+      case "IMAGE":
+        return <ImageIcon style={{ width: 18, height: 18 }} />;
+      case "VIDEO":
+        return <Video style={{ width: 18, height: 18 }} />;
+      case "AUDIO":
+        return <Music style={{ width: 18, height: 18 }} />;
+      case "PDF":
+        return <FileText style={{ width: 18, height: 18 }} />;
+      case "TEXT":
+        return <Type style={{ width: 18, height: 18 }} />;
+    }
+  };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 w-full">
-      {/* Page Header */}
-      <div>
-        <div className="inline-flex items-center gap-1.5 sm:gap-2 px-3 py-1 rounded-full bg-navy-50 dark:bg-slate-800 text-navy-800 dark:text-navy-300 text-[11px] sm:text-xs font-semibold border border-navy-100 dark:border-slate-700 mb-2">
-          <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />
-          <span>Official Provenance Anchor Console</span>
-        </div>
-        <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-          Register Official Content
-        </h2>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-          Select media category, upload assets or paste official statements, sign with Ed25519, and anchor to the national hash chain.
-        </p>
-      </div>
+    <section id="view-register" className="tab-page active-view">
+      <header className="page-header">
+        <h1>Register Official Content</h1>
+      </header>
 
-      {registeredResult ? (
+      {receipt ? (
         /* Success Receipt Card */
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="rounded-2xl sm:rounded-3xl p-5 sm:p-8 bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 shadow-sm space-y-5 sm:space-y-6"
-        >
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-200 dark:border-emerald-800 shadow-sm flex-shrink-0">
-              <CheckCircle2 className="h-6 w-6 sm:h-7 sm:w-7" />
+        <div className="content-card panel" style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "18px",
+                background: "rgba(17, 183, 127, 0.15)",
+                color: "var(--green)",
+                display: "grid",
+                placeItems: "center",
+              }}
+            >
+              <CheckCircle2 style={{ width: 28, height: 28 }} />
             </div>
-            <div className="min-w-0">
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">
+            <div>
+              <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
                 Content Cryptographically Anchored
-              </h3>
-              <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
-                Ledger Block #{registeredResult.hash_chain_block_id} • ID: {registeredResult.content_id?.substring(0, 16)}...
+              </h2>
+              <p style={{ margin: "3px 0 0", fontSize: "12px", color: "var(--text-secondary)" }}>
+                Ledger Block #{receipt.hash_chain_block_id} • Content ID: {receipt.content_id?.substring(0, 16)}...
               </p>
             </div>
           </div>
 
-          <div className="space-y-3 text-xs">
-            <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
-              <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">
-                Cryptographic SHA-256 Hash
-              </p>
-              <p className="hash-font font-mono text-[11px] sm:text-xs text-slate-900 dark:text-slate-200 break-all">
-                {registeredResult.sha256_hash}
-              </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "12px" }}>
+            <div
+              style={{
+                padding: "14px 16px",
+                borderRadius: "16px",
+                background: "var(--bg-well)",
+                boxShadow: "var(--well-shadow)",
+              }}
+            >
+              <span style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)" }}>
+                SHA-256 Cryptographic Hash
+              </span>
+              <div className="hash-well current" style={{ marginTop: "6px", wordBreak: "break-all" }}>
+                {receipt.sha256_hash}
+              </div>
             </div>
 
-            <div className="p-3.5 sm:p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
-              <p className="font-semibold text-slate-400 uppercase tracking-wider text-[10px]">
-                Ed25519 Digital Manifest Signature
-              </p>
-              <p className="hash-font font-mono text-[11px] sm:text-xs text-slate-900 dark:text-slate-200 break-all">
-                {registeredResult.manifest_signature}
-              </p>
-            </div>
+            {receipt.manifest_signature && (
+              <div
+                style={{
+                  padding: "14px 16px",
+                  borderRadius: "16px",
+                  background: "var(--bg-well)",
+                  boxShadow: "var(--well-shadow)",
+                }}
+              >
+                <span style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "var(--text-secondary)" }}>
+                  Ed25519 Manifest Signature
+                </span>
+                <div className="hash-well" style={{ marginTop: "6px", wordBreak: "break-all" }}>
+                  {receipt.manifest_signature}
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", paddingTop: "8px" }}>
             <button
+              className="primary-button"
               onClick={() => {
-                setRegisteredResult(null);
+                setReceipt(null);
                 setSelectedFile(null);
-                setStatementText("");
+                setPressReleaseText("");
                 setTitle("");
                 setDescription("");
+                setDepartment("");
+                setTags("");
               }}
-              className="px-5 py-3 rounded-xl bg-navy-800 text-white text-xs font-semibold hover:bg-navy-700 transition-colors shadow-sm text-center min-h-[44px]"
+              type="button"
             >
-              Register Another Item
+              Register Another Asset
             </button>
-            <button
-              onClick={() => router.push("/dashboard/content")}
-              className="px-5 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-center min-h-[44px]"
+            <Link
+              href="/dashboard/content"
+              className="primary-button"
+              style={{
+                background: "var(--bg-well)",
+                color: "var(--text-primary)",
+                boxShadow: "var(--well-shadow)",
+              }}
             >
-              View My Publications
-            </button>
+              View in Publications Registry
+            </Link>
           </div>
-        </motion.div>
+        </div>
       ) : (
         /* Registration Form */
-        <form onSubmit={handleRegister} className="space-y-6">
-          <div className="p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-            
-            {/* STEP 1: Content Type Dropdown Selector */}
-            <div className="space-y-3" ref={dropdownRef}>
-              <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-1">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  1. Select Content Type *
-                </label>
-                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                  Required before upload
-                </span>
-              </div>
-
-              {/* Animated Custom Dropdown Trigger */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setDropdownOpen((prev) => !prev)}
-                  className={`w-full flex items-center justify-between p-3 sm:p-4 rounded-2xl border transition-all duration-200 text-left min-h-[56px] ${
-                    dropdownOpen
-                      ? "border-navy-600 ring-2 ring-navy-500/20 bg-slate-50/80 dark:bg-slate-800/80 shadow-md"
-                      : "border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100/50 dark:hover:bg-slate-800/80"
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 pr-2">
-                    <div className="h-9 w-9 sm:h-11 sm:w-11 rounded-xl bg-navy-800 text-emerald-400 flex items-center justify-center shadow-sm flex-shrink-0">
-                      <ActiveIcon className="h-4 w-4 sm:h-5 sm:w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                        <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
-                          {currentConfig.label}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold bg-navy-100 dark:bg-navy-950 text-navy-800 dark:text-navy-300 border border-navy-200 dark:border-navy-800">
-                          {currentConfig.badge}
-                        </span>
-                      </div>
-                      <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate hidden xs:block">
-                        {currentConfig.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <motion.div
-                    animate={{ rotate: dropdownOpen ? 180 : 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="p-1 rounded-lg text-slate-400 flex-shrink-0"
-                  >
-                    <ChevronDown className="h-5 w-5" />
-                  </motion.div>
-                </button>
-
-                {/* Animated Dropdown Menu */}
-                <AnimatePresence>
-                  {dropdownOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -8, scale: 0.98 }}
-                      transition={{ duration: 0.18, ease: "easeOut" }}
-                      className="absolute left-0 right-0 top-full mt-2 z-40 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden p-1.5 sm:p-2 space-y-1 max-h-[70vh] overflow-y-auto"
-                    >
-                      {CONTENT_TYPES.map((type) => {
-                        const Icon = type.icon;
-                        const isSelected = type.id === selectedType;
-
-                        return (
-                          <button
-                            key={type.id}
-                            type="button"
-                            onClick={() => handleSelectType(type.id)}
-                            className={`w-full flex items-center justify-between p-2.5 sm:p-3 rounded-xl text-left transition-all min-h-[48px] ${
-                              isSelected
-                                ? "bg-navy-50 dark:bg-slate-800/90 text-navy-900 dark:text-white border border-navy-200/80 dark:border-slate-700"
-                                : "hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 pr-2">
-                              <div
-                                className={`h-8 w-8 sm:h-9 sm:w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                                  isSelected
-                                    ? "bg-navy-800 text-emerald-400 shadow-sm"
-                                    : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
-                                }`}
-                              >
-                                <Icon className="h-4 w-4" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-xs font-bold truncate">{type.label}</span>
-                                  <span className="text-[10px] font-semibold text-slate-400">
-                                    • {type.badge}
-                                  </span>
-                                </div>
-                                <p className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate hidden xs:block">
-                                  {type.description}
-                                </p>
-                              </div>
-                            </div>
-
-                            {isSelected && (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            {/* STEP 2: Tailored Upload or Text Statement Area */}
-            <div className="border-t border-slate-100 dark:border-slate-800 pt-5 sm:pt-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  2. {selectedType === "TEXT" ? "Provide Official Statement" : `Upload ${currentConfig.label}`} *
-                </label>
-
-                {selectedType === "TEXT" && (
-                  <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs border border-slate-200 dark:border-slate-700 w-fit">
-                    <button
-                      type="button"
-                      onClick={() => setTextInputMode("direct")}
-                      className={`px-2.5 sm:px-3 py-1 rounded-lg font-semibold transition-all min-h-[32px] ${
-                        textInputMode === "direct"
-                          ? "bg-white dark:bg-slate-900 text-navy-800 dark:text-white shadow-sm"
-                          : "text-slate-500 hover:text-slate-900 dark:text-slate-400"
-                      }`}
-                    >
-                      Type Statement
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTextInputMode("file")}
-                      className={`px-2.5 sm:px-3 py-1 rounded-lg font-semibold transition-all min-h-[32px] ${
-                        textInputMode === "file"
-                          ? "bg-white dark:bg-slate-900 text-navy-800 dark:text-white shadow-sm"
-                          : "text-slate-500 hover:text-slate-900 dark:text-slate-400"
-                      }`}
-                    >
-                      Upload Text File
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Dynamic Content Body based on selected type */}
-              <AnimatePresence mode="wait">
-                {selectedType === "TEXT" && textInputMode === "direct" ? (
-                  <motion.div
-                    key="text-direct"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
-                    <div className="relative">
-                      <textarea
-                        rows={6}
-                        value={statementText}
-                        onChange={(e) => setStatementText(e.target.value)}
-                        placeholder="Paste or compose the full text of the official government press release, gazette announcement, or public notification here..."
-                        className="w-full rounded-2xl p-3.5 sm:p-4 text-xs font-mono leading-relaxed bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white shadow-inner"
-                      />
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-400 px-1 font-medium gap-1">
-                      <span>
-                        Characters: {statementText.length} • Words:{" "}
-                        {statementText.trim() ? statementText.trim().split(/\s+/).length : 0}
-                      </span>
-                      <span className="text-emerald-600 dark:text-emerald-400">
-                        Packaged and anchored as UTF-8 statement
-                      </span>
-                    </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key={`upload-${selectedType}-${textInputMode}`}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <FileUploadZone
-                      onFileSelect={(f) => setSelectedFile(f)}
-                      acceptedTypes={currentConfig.acceptedTypes}
-                      contentTypeLabel={currentConfig.label}
-                      selectedFile={selectedFile}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* STEP 3: Publication Metadata */}
-            <div className="border-t border-slate-100 dark:border-slate-800 pt-5 sm:pt-6 space-y-4">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                3. Publication Metadata
+        <form onSubmit={handleSubmit}>
+          <div className="content-card panel">
+            {/* 1. Content Type Dropdown */}
+            <div className="input-group">
+              <label className="input-label">
+                1. SELECT CONTENT TYPE <span style={{ color: "#ef4444" }}>*</span>
               </label>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Publication Title *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="e.g. Official Gazette Circular on Digital Media 2026"
-                    className="w-full rounded-xl px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white"
+              <div className="dropdown-container" ref={dropdownRef}>
+                <div
+                  className="portal-dropdown-trigger"
+                  onClick={() => setIsDropdownOpen((prev) => !prev)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="portal-icon-box" id="selected-icon">
+                    {renderIcon(selectedType.key)}
+                  </div>
+                  <div className="portal-trigger-copy">
+                    <span id="selected-title">{selectedType.title}</span>
+                    <span className="portal-format-pill" id="selected-pill">
+                      {selectedType.pill}
+                    </span>
+                  </div>
+                  <ChevronDown
+                    style={{
+                      color: "var(--text-secondary)",
+                      marginLeft: "auto",
+                      transform: isDropdownOpen ? "rotate(180deg)" : "none",
+                      transition: "transform 0.2s ease",
+                    }}
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Department / Division
-                  </label>
-                  <input
-                    type="text"
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    placeholder="e.g. Press Information Bureau / Ministry of I&B"
-                    className="w-full rounded-xl px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white"
+                {/* Dropdown Tray */}
+                {isDropdownOpen && (
+                  <div
+                    className="portal-dropdown-tray"
+                    id="custom-dropdown-tray"
+                    style={{ display: "block" }}
+                  >
+                    {CONTENT_TYPES.map((option) => (
+                      <div
+                        key={option.key}
+                        className={`portal-option-row ${
+                          option.key === selectedType.key ? "active-row" : ""
+                        }`}
+                        onClick={() => handleSelectOption(option)}
+                      >
+                        <div className="portal-row-icon">{renderIcon(option.key)}</div>
+                        <div className="portal-row-title">
+                          {option.title} <span className="portal-row-tag">• {option.pill}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Dynamic Input Area: File Dropzone OR Press Release Text Composer */}
+            <div className="input-group">
+              <label className="input-label" id="media-step-label">
+                {selectedType.key === "TEXT"
+                  ? "2. OFFICIAL STATEMENT CONTENT"
+                  : "2. UPLOAD OFFICIAL MEDIA FILE"}{" "}
+                <span style={{ color: "#ef4444" }}>*</span>
+              </label>
+
+              {selectedType.key === "TEXT" ? (
+                /* Press Release Direct Text Composer */
+                <div className="press-release-composer" id="press-release-box" style={{ display: "block" }}>
+                  <div className="composer-header-row">
+                    <span>Official Text Statement Editor</span>
+                    <small id="char-count">{pressReleaseText.length} characters</small>
+                  </div>
+                  <textarea
+                    className="composer-textarea"
+                    value={pressReleaseText}
+                    onChange={(e) => setPressReleaseText(e.target.value)}
+                    placeholder="Type or paste the official government statement, press briefing, or announcement text here for cryptographic hash anchoring..."
                   />
                 </div>
-              </div>
+              ) : (
+                /* Standard File Dropzone */
+                <>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept={selectedType.accept}
+                    style={{ display: "none" }}
+                  />
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Description / Context
-                </label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Official context and purpose of this publication..."
-                  className="w-full rounded-xl p-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white"
-                />
-              </div>
+                  <div
+                    className="dropzone-clean"
+                    id="file-dropzone-box"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      textAlign: "center",
+                      borderColor: isDragging ? "var(--green)" : undefined,
+                      background: isDragging ? "var(--bg-hover)" : undefined,
+                      width: "100%",
+                      boxSizing: "border-box",
+                    }}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragging(true);
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                  >
+                    {selectedFile ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "8px",
+                          textAlign: "center",
+                          width: "100%",
+                        }}
+                      >
+                        <FileCheck
+                          style={{
+                            width: 44,
+                            height: 44,
+                            color: "var(--green)",
+                            margin: "0 auto 8px auto",
+                            display: "block",
+                          }}
+                        />
+                        <strong
+                          style={{
+                            fontSize: "14px",
+                            color: "var(--text-primary)",
+                            wordBreak: "break-all",
+                            display: "block",
+                            textAlign: "center",
+                          }}
+                        >
+                          {selectedFile.name}
+                        </strong>
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            color: "var(--text-secondary)",
+                            display: "block",
+                            textAlign: "center",
+                          }}
+                        >
+                          {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • Ready to anchor
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedFile(null);
+                          }}
+                          style={{
+                            marginTop: "8px",
+                            fontSize: "11px",
+                            color: "#ef4444",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            background: "transparent",
+                            border: 0,
+                          }}
+                        >
+                          Remove File
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          textAlign: "center",
+                          width: "100%",
+                        }}
+                      >
+                        <UploadCloud
+                          style={{
+                            width: 44,
+                            height: 44,
+                            color: "var(--green)",
+                            margin: "0 auto 10px auto",
+                            display: "block",
+                          }}
+                        />
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "13px",
+                            fontWeight: 700,
+                            color: "var(--text-primary)",
+                            textAlign: "center",
+                          }}
+                        >
+                          Tap to upload or drag &amp; drop official {selectedType.title.toLowerCase()}
+                        </p>
+                        <span
+                          style={{
+                            fontSize: "10.5px",
+                            color: "var(--text-secondary)",
+                            marginTop: "6px",
+                            display: "block",
+                            textAlign: "center",
+                          }}
+                        >
+                          Accepted: {selectedType.pill}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Tags (Comma separated)
+            {/* 3. Metadata Section */}
+            <div className="section-subhead">3. Publication Metadata</div>
+
+            <div className="form-grid-2">
+              <div className="input-group">
+                <label className="input-label">
+                  Publication Title <span style={{ color: "#ef4444" }}>*</span>
                 </label>
                 <input
                   type="text"
-                  value={tags}
-                  onChange={(e) => setTags(e.target.value)}
-                  placeholder="press-release, gazette, announcement, national-security"
-                  className="w-full rounded-xl px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white"
+                  required
+                  className="custom-field"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Official Gazette Circular on Digital Media 2026"
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Department / Division</label>
+                <input
+                  type="text"
+                  className="custom-field"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  placeholder="e.g. Press Information Bureau / Ministry of I&B"
                 />
               </div>
             </div>
 
-            {/* STEP 4: Signing Key Option */}
-            <div className="border-t border-slate-100 dark:border-slate-800 pt-5 sm:pt-6 space-y-3">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                4. Cryptographic Manifest Signature
-              </label>
-              <div className="p-3 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5">
-                <ShieldCheck className="h-4 w-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  Your official <strong>Ed25519 digital keypair</strong> will automatically sign this canonical manifest and append a block to the immutable ledger.
-                </p>
-              </div>
-
-              <input
-                type="password"
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-                placeholder="Optional external Ed25519 Private Key PEM (leave empty to use registered system key)"
-                className="w-full rounded-xl px-3.5 py-2.5 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-navy-500 text-slate-900 dark:text-white"
+            <div className="input-group">
+              <label className="input-label">Description / Context</label>
+              <textarea
+                className="custom-field"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Official context and purpose of this publication..."
               />
             </div>
-          </div>
 
-          {/* Submit Action Button */}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full py-3.5 sm:py-4 rounded-2xl bg-navy-800 hover:bg-navy-700 text-white font-bold text-xs sm:text-sm transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2.5 disabled:opacity-50 min-h-[48px]"
-          >
-            {submitting ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Computing Hashes, Signing Manifest & Anchoring Ledger...
-              </>
-            ) : (
-              <>
-                <FilePlus2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
-                Sign & Register {currentConfig.category} in Ledger
-              </>
-            )}
-          </button>
+            <div className="input-group">
+              <label className="input-label">Tags (Comma separated)</label>
+              <input
+                type="text"
+                className="custom-field"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                placeholder="press-release, gazette, announcement, national-security"
+              />
+            </div>
+
+            {/* Optional External Signer Private Key */}
+            <div className="input-group">
+              <label className="input-label">
+                Optional Ed25519 Private Key PEM (leave blank to sign with registered key)
+              </label>
+              <input
+                type="password"
+                className="custom-field"
+                value={privateKey}
+                onChange={(e) => setPrivateKey(e.target.value)}
+                placeholder="Optional Ed25519 Private Key PEM..."
+              />
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="form-actions-bottom">
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={isSubmitting}
+                id="submit-registration-btn"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        border: "2px solid rgba(255,255,255,0.3)",
+                        borderTopColor: "#fff",
+                        borderRadius: "50%",
+                        animation: "spin 0.8s linear infinite",
+                      }}
+                    />
+                    <span>Signing &amp; Anchoring...</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck style={{ width: 16, height: 16 }} />
+                    <span>Register &amp; Anchor Content</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </form>
       )}
-    </div>
+    </section>
   );
 }

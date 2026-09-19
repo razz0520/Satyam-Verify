@@ -17,6 +17,7 @@ from app.config import settings
 from app.core.hash_service import (
     calculate_file_hash,
     generate_audio_fingerprint,
+    generate_audio_fingerprint_dict,
     generate_image_dhash,
     generate_image_phash,
     generate_pdf_fingerprint,
@@ -153,11 +154,8 @@ class PublisherService:
                     perceptual_hash_data = v_phash
                     duration_seconds = v_phash.get("duration_seconds")
                 elif content_type == ContentType.AUDIO:
-                    afp = generate_audio_fingerprint(saved_path)
-                    perceptual_hash_data = {
-                        "algorithm": "MFCC + Chroma Fingerprint",
-                        "audio_fingerprint": afp,
-                    }
+                    afp_dict = generate_audio_fingerprint_dict(saved_path)
+                    perceptual_hash_data = afp_dict
                 elif content_type == ContentType.PDF:
                     perceptual_hash_data = generate_pdf_fingerprint(saved_path)
                 else:  # TEXT
@@ -262,7 +260,30 @@ class PublisherService:
                 },
             )
 
-            # Step 7: Audit Log
+            # Step 7: S3 Cloud Storage Persistence (if enabled)
+            if getattr(settings, "S3_ENABLED", False):
+                try:
+                    import boto3
+                    s3_client = boto3.client("s3", region_name=settings.AWS_REGION)
+                    s3_key = f"originals/{unique_stored_name}"
+                    logger.info("Persisting official original to S3 bucket %s [key: %s]", settings.S3_BUCKET_NAME, s3_key)
+                    s3_client.upload_file(
+                        Filename=str(saved_path),
+                        Bucket=settings.S3_BUCKET_NAME,
+                        Key=s3_key,
+                        ExtraArgs={"ServerSideEncryption": "AES256"},
+                    )
+                    logger.info("Successfully persisted official original to S3: s3://%s/%s", settings.S3_BUCKET_NAME, s3_key)
+                except Exception as s3_err:
+                    logger.error("Failed to upload official content to S3: %s", s3_err)
+                    if saved_path.exists():
+                        try:
+                            saved_path.unlink()
+                        except Exception:
+                            pass
+                    raise IOError(f"Permanent S3 storage failed for official content: {s3_err}") from s3_err
+
+            # Step 8: Audit Log
             audit = AuditLog(
                 actor_id=publisher.id,
                 action="CONTENT_REGISTER",
@@ -271,6 +292,7 @@ class PublisherService:
                     "sha256": sha256_hash,
                     "filename": original_name,
                     "chain_block": chain_entry.id,
+                    "s3_persisted": bool(getattr(settings, "S3_ENABLED", False)),
                 },
             )
             db.add(audit)

@@ -143,7 +143,7 @@ def test_response_templates():
         "perceptual_hash": {"similarity_percentage": 100},
     }
     ver_payload = format_verified_response(verified_evidence, confidence=0.99)
-    assert "Verified official content" in ver_payload["body_text"]
+    assert "VERIFIED" in ver_payload["body_text"]
     assert "Ministry of Electronics & IT" in ver_payload["body_text"]
     assert len(ver_payload["buttons"]) == 1
     assert ver_payload["buttons"][0]["id"] == "btn_proof"
@@ -156,7 +156,7 @@ def test_response_templates():
         "notice": "Media altered",
     }
     susp_payload = format_suspicious_response(susp_evidence, confidence=0.78)
-    assert "This appears to be a modified version" in susp_payload["body_text"]
+    assert "SUSPICIOUS" in susp_payload["body_text"]
     assert "Press Information Bureau" in susp_payload["body_text"]
     assert len(susp_payload["buttons"]) == 2
     assert [b["id"] for b in susp_payload["buttons"]] == ["btn_proof", "btn_report"]
@@ -164,13 +164,13 @@ def test_response_templates():
 
     # 3. Unsigned Response - exactly 2 buttons: btn_proof, btn_report
     unsign_payload = format_unsigned_response()
-    assert "We can't confirm this is official government content" in unsign_payload["body_text"]
+    assert "NOT FOUND IN OUR REGISTRY" in unsign_payload["body_text"]
     assert len(unsign_payload["buttons"]) == 2
     assert [b["id"] for b in unsign_payload["buttons"]] == ["btn_proof", "btn_report"]
 
     # 4. Invalid Response - exactly 2 buttons: btn_proof, btn_report
     inv_payload = format_invalid_response("Corrupted file format")
-    assert "This does not match any official record" in inv_payload["body_text"]
+    assert "NOT CURRENTLY TRUSTED" in inv_payload["body_text"]
     assert len(inv_payload["buttons"]) == 2
     assert [b["id"] for b in inv_payload["buttons"]] == ["btn_proof", "btn_report"]
 
@@ -263,47 +263,55 @@ def test_onboarding_brevity_and_cleanliness():
 
 
 def test_proof_message_relevant_signals_only():
-    """Verify proof message only renders signals actually present in the evidence."""
-    # Case 1: Only SHA-256 match present (no signature, no perceptual, no chain)
-    result_sha_only = {
+    """Verify proof message renders 4 primary verification proofs in 2-level citizen + technical format."""
+    # Case 1: Exact match VERIFIED
+    result_exact = {
         "verdict": "VERIFIED",
+        "created_at": "2026-08-20T10:00:00Z",
         "evidence_bundle": {
             "sha256_match": True,
-            "digital_signature": None,
-            "manifest_data": None,
-            "chain_block_id": None,
-            "perceptual_match_status": "NOT_APPLICABLE",
+            "signature_valid": True,
+            "manifest_data": {"timestamp": "2026-08-20T10:00:00Z"},
+            "chain_block_id": 42,
+            "chain_integrity": True,
+            "manifest_valid": True,
         },
     }
-    proof_sha = format_proof_message(result_sha_only)
-    assert "Matches the original file" in proof_sha
-    assert "SHA-256 hash match confirmed" in proof_sha
-    assert "Digitally signed" not in proof_sha
-    assert "C2PA" not in proof_sha
-    assert "tamper-proof ledger" not in proof_sha
+    proof_exact = format_proof_message(result_exact)
+    assert "How this was checked:" in proof_exact
+    assert "• File is an exact match to the registered original" in proof_exact
+    assert "Technical: SHA-256 cryptographic hash match" in proof_exact
+    assert "• Digitally signed by the publisher — valid" in proof_exact
+    assert "Technical: Ed25519 cryptographic signature verified" in proof_exact
+    assert "• Recorded on tamper-resistant ledger — confirmed" in proof_exact
+    assert "Technical: Hash-chain ledger block #42 integrity confirmed" in proof_exact
+    # Must NOT contain fifth proof or registration date proof
+    assert "Provenance record" not in proof_exact
+    assert "Registered on" not in proof_exact
 
-    # Case 2: Full evidence present
-    result_full = {
+    # Case 2: Perceptual match VERIFIED (>=95%)
+    result_perceptual_verified = {
         "verdict": "VERIFIED",
         "evidence_bundle": {
-            "sha256_match": True,
-            "perceptual_match_status": "EXACT_MATCH",
-            "digital_signature": "sig_hex_data",
+            "sha256_match": False,
+            "match_type": "PERCEPTUAL_SIMILARITY",
+            "similarity_score": 96.5,
             "signature_valid": True,
-            "manifest_data": {"claim": "data"},
-            "manifest_valid": True,
-            "chain_block_id": 99,
+            "manifest_data": {"timestamp": "2026-08-15T12:00:00Z"},
+            "chain_block_id": 40,
             "chain_integrity": True,
         },
     }
-    proof_full = format_proof_message(result_full)
-    assert "SHA-256 hash match confirmed" in proof_full
-    assert "Perceptual fingerprint" in proof_full
-    assert "Ed25519 cryptographic signature verified" in proof_full
-    assert "C2PA-standard provenance manifest" in proof_full
-    assert "Hash-chain ledger block #99 integrity confirmed" in proof_full
-    assert len(proof_full) < 1024
-    assert "**" not in proof_full
+    proof_perceptual_ver = format_proof_message(result_perceptual_verified)
+    assert "• File content differs from the original — not an exact copy" in proof_perceptual_ver
+    assert "Technical: SHA-256 hash mismatch (altered or re-encoded)" in proof_perceptual_ver
+    assert "• Looks and sounds like the original — 96% match" in proof_perceptual_ver or "• Looks and sounds like the original — 97% match" in proof_perceptual_ver
+    assert "Technical: Perceptual fingerprint similarity 96.5%" in proof_perceptual_ver
+    assert "• Digitally signed by the publisher — valid" in proof_perceptual_ver
+    assert "Technical: Ed25519 cryptographic signature verified" in proof_perceptual_ver
+    assert "• Recorded on tamper-resistant ledger — confirmed" in proof_perceptual_ver
+    assert "Technical: Hash-chain ledger block #40 integrity confirmed" in proof_perceptual_ver
+    assert "Registered on" not in proof_perceptual_ver
 
     # Case 3: Unsigned fallback
     result_unsigned = {
@@ -314,50 +322,123 @@ def test_proof_message_relevant_signals_only():
         },
     }
     proof_unsigned = format_proof_message(result_unsigned)
-    assert "no matching records found" in proof_unsigned
+    assert "• File content does not match any registered official record" in proof_unsigned
+    assert "Technical: SHA-256 hash not found in official registry" in proof_unsigned
+    assert "• No comparable visual, acoustic, or textual match found" in proof_unsigned
+    assert "Technical: Perceptual fingerprint search yielded no match" in proof_unsigned
+    assert "• No verified provenance relationship was established" in proof_unsigned
+    assert "Technical: Unregistered in government provenance ledger" in proof_unsigned
 
 
-def test_proof_message_partial_signals():
-    """Verify proof message accurately adapts when only manifest or signature is present."""
-    # Manifest only
-    res_manifest = {
-        "verdict": "VERIFIED",
+def test_proof_message_perceptual_suspicious_and_proven_invalid():
+    """Verify proof message for SUSPICIOUS, Revoked Content, Revoked Credential, and Forged Signature."""
+    # Case 1: Perceptual SUSPICIOUS (e.g. 94.33% deepfake/modified)
+    result_susp = {
+        "verdict": "SUSPICIOUS",
         "evidence_bundle": {
-            "manifest_data": {"format": "C2PA"},
-            "manifest_valid": True,
             "sha256_match": False,
-        },
-    }
-    proof_manifest = format_proof_message(res_manifest)
-    assert "C2PA-standard provenance manifest" in proof_manifest
-    assert "Ed25519 cryptographic signature" not in proof_manifest
-
-    # Signature only
-    res_sig = {
-        "verdict": "VERIFIED",
-        "evidence_bundle": {
-            "digital_signature": "valid_sig_12345",
+            "match_type": "PERCEPTUAL_SIMILARITY",
+            "similarity_score": 94.33,
             "signature_valid": True,
-            "sha256_match": False,
+            "manifest_data": {"timestamp": "2026-08-10T08:00:00Z"},
+            "chain_block_id": 47,
+            "chain_integrity": True,
         },
     }
-    proof_sig = format_proof_message(res_sig)
-    assert "Ed25519 cryptographic signature verified" in proof_sig
-    assert "C2PA" not in proof_sig
+    proof_susp = format_proof_message(result_susp)
+    assert "• File content differs from the original — not an exact copy" in proof_susp
+    assert "Technical: SHA-256 hash mismatch (altered or re-encoded)" in proof_susp
+    assert "• Looks and sounds like the original — 94% match" in proof_susp
+    assert "Technical: Perceptual fingerprint similarity 94.33%" in proof_susp
+    assert "• Digitally signed by the publisher — valid" in proof_susp
+    assert "Technical: Ed25519 cryptographic signature verified" in proof_susp
+    assert "• Recorded on tamper-resistant ledger — confirmed" in proof_susp
+    assert "Technical: Hash-chain ledger block #47 integrity confirmed" in proof_susp
+    assert "Registered on" not in proof_susp
 
-    # Tampered / Invalid
-    res_invalid = {
+    # Case 2: Revoked Content (Perceptual Match, e.g. Transcoded Video)
+    result_revoked_content = {
         "verdict": "PROVEN_INVALID",
+        "matched_content": {
+            "status": "REVOKED",
+            "created_at": "2026-07-01T10:00:00Z",
+            "revoked_at": "2026-08-01T12:00:00Z",
+        },
         "evidence_bundle": {
             "sha256_match": False,
-            "signature_valid": False,
-            "manifest_valid": False,
-            "chain_integrity": False,
+            "match_type": "PERCEPTUAL_SIMILARITY",
+            "similarity_score": 100.0,
+            "signature_valid": True,
+            "chain_block_id": 51,
+            "chain_integrity": True,
+            "notice": "Content was officially revoked by the publishing authority.",
         },
     }
-    proof_invalid = format_proof_message(res_invalid)
-    assert "authenticity check" in proof_invalid.lower()
-    assert "cryptographic signature or manifest validation failed" in proof_invalid.lower()
+    proof_rev_content = format_proof_message(result_revoked_content)
+    assert "• This content matches a previously registered official file — 100% match" in proof_rev_content
+    assert "Technical: Perceptual fingerprint similarity 100%" in proof_rev_content
+    assert "• The original publication has been officially withdrawn" in proof_rev_content
+    assert "Technical: Registry status — REVOKED" in proof_rev_content
+    assert "• The publisher's digital signature is valid" in proof_rev_content
+    assert "Technical: Ed25519 cryptographic signature verified" in proof_rev_content
+    assert "• The original record remains intact on the ledger" in proof_rev_content
+    assert "Technical: Hash-chain ledger block #51 integrity confirmed" in proof_rev_content
+
+    # Case 3: Revoked Publisher Credential
+    result_revoked_cred = {
+        "verdict": "PROVEN_INVALID",
+        "matched_content": {
+            "status": "ACTIVE",
+            "created_at": "2026-06-15T10:00:00Z",
+            "revoked_at": "2026-07-20T14:00:00Z",
+        },
+        "evidence_bundle": {
+            "sha256_match": True,
+            "signature_valid": True,
+            "chain_integrity": True,
+            "chain_block_id": 30,
+            "notice": "Publisher signing credential has been officially revoked by the government authority.",
+        },
+    }
+    proof_rev_cred = format_proof_message(result_revoked_cred)
+    assert "• This content matches a previously registered official file" in proof_rev_cred
+    assert "Technical: SHA-256 cryptographic hash match" in proof_rev_cred
+    assert "• The publishing authority authorization has been withdrawn" in proof_rev_cred
+    assert "Technical: Publisher credential status — REVOKED" in proof_rev_cred
+    assert "• Signed at registration — signature valid" in proof_rev_cred
+    assert "• The original record remains intact on the ledger" in proof_rev_cred
+    assert "Technical: Hash-chain ledger block #30 integrity confirmed" in proof_rev_cred
+
+    # Case 4: Invalid / Forged Signature
+    result_invalid_sig = {
+        "verdict": "PROVEN_INVALID",
+        "matched_content": {
+            "status": "ACTIVE",
+            "created_at": "2026-05-10T10:00:00Z",
+        },
+        "evidence_bundle": {
+            "sha256_match": True,
+            "signature_valid": False,
+            "notice": "Cryptographic signature validation or credential trust failed for this registered content.",
+        },
+    }
+    proof_invalid_sig = format_proof_message(result_invalid_sig)
+    assert "• Exact file content match with registered record" in proof_invalid_sig
+    assert "• Publisher signature could not be verified" in proof_invalid_sig
+    assert "Technical: Ed25519 signature verification failed" in proof_invalid_sig
+
+    # Case 5: Missing dates / absent fields omitted cleanly (no fabrication)
+    result_no_dates = {
+        "verdict": "VERIFIED",
+        "evidence_bundle": {
+            "sha256_match": True,
+        },
+    }
+    proof_no_dates = format_proof_message(result_no_dates)
+    assert "• File is an exact match to the registered original" in proof_no_dates
+    assert "Technical: SHA-256 cryptographic hash match" in proof_no_dates
+    assert "Registered on" not in proof_no_dates
+    assert "Ed25519" not in proof_no_dates
 
 
 # ============================================================================
@@ -506,7 +587,7 @@ def test_process_text_verification(db: Session):
         assert res.get("verdict") == "VERIFIED"
         assert mock_send_int.called
         sent_body = mock_send_int.call_args[1]["body_text"]
-        assert "Verified official content" in sent_body
+        assert "VERIFIED" in sent_body
         assert "Ministry of Information" in sent_body
 
 
@@ -552,7 +633,7 @@ def test_media_pipeline_image_verified(db: Session, tmp_path):
         assert res["verification_result"]["verdict"] == "VERIFIED"
         assert mock_send_int.called
         sent_body = mock_send_int.call_args[1]["body_text"]
-        assert "Verified official content" in sent_body
+        assert "VERIFIED" in sent_body
 
 
 def test_media_pipeline_audio_verified(db: Session, tmp_path):
@@ -666,7 +747,7 @@ def test_media_pipeline_video_unsigned(db: Session, tmp_path):
         assert res["verification_result"]["verdict"] == "UNSIGNED"
         assert mock_send_int.called
         sent_body = mock_send_int.call_args[1]["body_text"]
-        assert "We can't confirm this is official government content" in sent_body
+        assert "NOT FOUND IN OUR REGISTRY" in sent_body
 
 
 # ============================================================================
@@ -1189,57 +1270,55 @@ def test_casual_small_talk_and_text_routing(db: Session):
         mock_send_int.reset_mock()
         mock_send_txt.reset_mock()
 
-        # 3. "thanks" -> no response
-        res_thanks = process_message(make_msg("thanks"), sender_name="Citizen", db=db)
-        assert res_thanks.get("type") == "small_talk_ignored"
-        assert not mock_send_txt.called
-        assert not mock_send_int.called
+        # 3. Basic & extended small talk phrases -> no response (silently ignored)
+        approved_small_talk_cases = [
+            "thanks", "thank you", "okay", "bye",
+            "thnx", "Thnx!", "tnx", "thank u", "ty", "tysm", "tq", "thanks a lot"
+        ]
+        for phrase in approved_small_talk_cases:
+            res_phrase = process_message(make_msg(phrase), sender_name="Citizen", db=db)
+            assert res_phrase.get("type") == "small_talk_ignored", f"Failed for phrase: {phrase}"
+            assert not mock_send_txt.called, f"Outbound text was sent for {phrase}"
+            assert not mock_send_int.called, f"Outbound interactive was sent for {phrase}"
 
-        # 4. "thank you" -> no response
-        res_ty = process_message(make_msg("thank you"), sender_name="Citizen", db=db)
-        assert res_ty.get("type") == "small_talk_ignored"
-        assert not mock_send_txt.called
-        assert not mock_send_int.called
-
-        # 5. "okay" -> no response
-        res_okay = process_message(make_msg("okay"), sender_name="Citizen", db=db)
-        assert res_okay.get("type") == "small_talk_ignored"
-        assert not mock_send_txt.called
-        assert not mock_send_int.called
-
-        # 6. "bye" -> no response
-        res_bye = process_message(make_msg("bye"), sender_name="Citizen", db=db)
-        assert res_bye.get("type") == "small_talk_ignored"
-        assert not mock_send_txt.called
-        assert not mock_send_int.called
-
-        # 7. standalone casual emoji -> no response
+        # 4. Standalone casual emojis -> no response (silently ignored)
         for emoji_text in ["👍", "🙏", "❤️", "😊", "😂", "👏", "👌"]:
             res_emoji = process_message(make_msg(emoji_text), sender_name="Citizen", db=db)
             assert res_emoji.get("type") == "small_talk_ignored", f"Failed for emoji: {emoji_text}"
             assert not mock_send_txt.called
             assert not mock_send_int.called
 
-        # 8. random normal text -> existing verification flow
+        # 5. Random normal text -> existing verification flow
         res_random = process_message(make_msg("Government Advisory Notification Ref 90214"), sender_name="Citizen", db=db)
         assert res_random.get("type") == "text_verification"
         assert mock_send_int.called
         mock_send_int.reset_mock()
 
-        # 9. "verify this document" -> NOT classified as small talk
-        res_cmd = process_message(make_msg("verify this document"), sender_name="Citizen", db=db)
-        assert res_cmd.get("type") == "text_verification"
+        # 6. "verify this document" -> NOT classified as small talk
+        res_cmd1 = process_message(make_msg("verify this document"), sender_name="Citizen", db=db)
+        assert res_cmd1.get("type") == "text_verification"
         assert mock_send_int.called
         mock_send_int.reset_mock()
 
-        # 10. "The Ministry thanks citizens for their cooperation." -> NOT classified as small talk
-        statement_text = "The Ministry thanks citizens for their cooperation."
-        res_stmt = process_message(make_msg(statement_text), sender_name="Citizen", db=db)
-        assert res_stmt.get("type") == "text_verification"
+        # 7. "Please verify this document." -> NOT classified as small talk
+        res_cmd2 = process_message(make_msg("Please verify this document."), sender_name="Citizen", db=db)
+        assert res_cmd2.get("type") == "text_verification"
         assert mock_send_int.called
         mock_send_int.reset_mock()
 
-        # 11. A long message containing "thanks" -> NOT classified as small talk
+        # 8. "The Ministry thanks citizens for their cooperation." -> NOT classified as small talk
+        res_stmt1 = process_message(make_msg("The Ministry thanks citizens for their cooperation."), sender_name="Citizen", db=db)
+        assert res_stmt1.get("type") == "text_verification"
+        assert mock_send_int.called
+        mock_send_int.reset_mock()
+
+        # 9. "Thanks for sending the official notice." -> NOT classified as small talk
+        res_stmt2 = process_message(make_msg("Thanks for sending the official notice."), sender_name="Citizen", db=db)
+        assert res_stmt2.get("type") == "text_verification"
+        assert mock_send_int.called
+        mock_send_int.reset_mock()
+
+        # 10. A long message containing "thanks" -> NOT classified as small talk
         long_text = "Important press circular regarding tax compliance: Thanks to all taxpayers for timely submission before deadline."
         res_long = process_message(make_msg(long_text), sender_name="Citizen", db=db)
         assert res_long.get("type") == "text_verification"

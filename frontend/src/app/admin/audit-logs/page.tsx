@@ -1,36 +1,39 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { TableSkeleton } from "@/components/LoadingSkeleton";
+import { useAdminStore } from "@/services/adminStore";
 import { api } from "@/services/api";
 import { toast } from "sonner";
 import {
-  ScrollText,
   Search,
-  RefreshCw,
   Eye,
-  ShieldAlert,
-  Calendar,
   X,
+  History,
+  Copy,
+  Check,
 } from "lucide-react";
 
 export default function AdminAuditLogsPage() {
-  const [logs, setLogs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { auditLogsList, setAuditLogsList } = useAdminStore();
+  const [logs, setLogs] = useState<any[]>(auditLogsList);
+  const [loading, setLoading] = useState(auditLogsList.length === 0);
   const [searchTerm, setSearchTerm] = useState("");
   const [actionFilter, setActionFilter] = useState("");
   const [selectedLog, setSelectedLog] = useState<any | null>(null);
+  const [copiedJson, setCopiedJson] = useState(false);
 
   const fetchLogs = async () => {
-    setLoading(true);
+    if (logs.length === 0) setLoading(true);
     try {
       let url = "/admin/audit-logs?limit=100";
       if (actionFilter) url += `&action=${actionFilter}`;
       const res = await api.get(url);
-      setLogs(res.data || []);
+      const data = res.data || [];
+      setLogs(data);
+      setAuditLogsList(data);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load audit logs.");
+      toast.error("Failed to load immutable audit logs.");
     } finally {
       setLoading(false);
     }
@@ -40,161 +43,219 @@ export default function AdminAuditLogsPage() {
     fetchLogs();
   }, [actionFilter]);
 
+  const handleCopyJson = (obj: any) => {
+    navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+    setCopiedJson(true);
+    toast.success("Payload JSON copied to clipboard!");
+    setTimeout(() => setCopiedJson(false), 2000);
+  };
+
   const filteredLogs = logs.filter((log) => {
     const term = searchTerm.toLowerCase();
     return (
-      log.action.toLowerCase().includes(term) ||
-      (log.actor_id && log.actor_id.toLowerCase().includes(term))
+      (log.action && log.action.toLowerCase().includes(term)) ||
+      (log.actor_id && log.actor_id.toLowerCase().includes(term)) ||
+      (log.ip_address && log.ip_address.toLowerCase().includes(term))
     );
   });
 
-  return (
-    <div className="space-y-5 sm:space-y-6 max-w-7xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-            Immutable Audit Trail
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-            Tamper-evident log of all publisher registrations, signings, revocations, and system actions
-          </p>
-        </div>
+  const getActionBadge = (action: string) => {
+    switch (action?.toUpperCase()) {
+      case "LOGIN_SUCCESS":
+        return <span className="active-badge">{action}</span>;
+      case "LOGIN_FAILED":
+        return (
+          <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "4px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 800 }}>
+            {action}
+          </span>
+        );
+      case "CONTENT_REGISTER":
+        return (
+          <span style={{ background: "#ede9fe", color: "#6d28d9", padding: "4px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 800 }}>
+            {action}
+          </span>
+        );
+      case "CONTENT_REVOKED":
+      case "CREDENTIAL_REVOKED":
+        return (
+          <span style={{ background: "#fef3c7", color: "#b45309", padding: "4px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 800 }}>
+            {action}
+          </span>
+        );
+      default:
+        return (
+          <span style={{ background: "#f3f5f4", color: "var(--text-main)", padding: "4px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 800 }}>
+            {action}
+          </span>
+        );
+    }
+  };
 
-        <button
-          onClick={fetchLogs}
-          className="p-2 sm:p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors w-full sm:w-fit min-h-[40px]"
-        >
-          <RefreshCw className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>Refresh Trail</span>
-        </button>
+  return (
+    <section id="view-audit" className="view-pane">
+      {/* Page Header */}
+      <div className="view-header">
+        <div className="view-title">
+          <h2>Immutable Audit Trail</h2>
+          <p>Tamper-evident log of all publisher registrations, signings, revocations, and system actions</p>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-        <div className="relative">
-          <Search className="h-4 w-4 text-slate-400 absolute left-3 top-3" />
+      {/* Filter Bar */}
+      <div className="filter-bar-clean">
+        <div className="search-input-clean">
+          <Search style={{ width: 16, height: 16, color: "#9aa1a9" }} />
           <input
             type="text"
+            placeholder="Search by action or actor ID..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by action or actor ID..."
-            className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
           />
         </div>
-
         <select
+          className="select-pill-clean"
           value={actionFilter}
           onChange={(e) => setActionFilter(e.target.value)}
-          className="rounded-xl px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
         >
           <option value="">All Audit Actions</option>
+          <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
+          <option value="LOGIN_FAILED">LOGIN_FAILED</option>
           <option value="CONTENT_REGISTER">CONTENT_REGISTER</option>
           <option value="CONTENT_SUPERSEDED">CONTENT_SUPERSEDED</option>
           <option value="CONTENT_REVOKED">CONTENT_REVOKED</option>
-          <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
           <option value="CREDENTIAL_CREATED">CREDENTIAL_CREATED</option>
           <option value="CREDENTIAL_REVOKED">CREDENTIAL_REVOKED</option>
           <option value="ROLE_ASSIGNED">ROLE_ASSIGNED</option>
         </select>
       </div>
 
-      {/* Audit Logs Table */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-4">
-        {loading ? (
-          <TableSkeleton rows={6} />
-        ) : filteredLogs.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 text-xs">
-            No audit events found.
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-            <table className="w-full text-left text-xs min-w-[650px]">
-              <thead className="text-[11px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">
+      {/* Clean Table Container */}
+      <div className="table-clean-container">
+        <div className="table-scroll-wrap">
+          <table className="clean-table">
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Actor ID</th>
+                <th>IP Address</th>
+                <th>Timestamp</th>
+                <th style={{ textAlign: "right" }}>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && logs.length === 0 ? (
                 <tr>
-                  <th className="py-3 px-4">Action</th>
-                  <th className="py-3 px-4">Actor ID</th>
-                  <th className="py-3 px-4">IP Address</th>
-                  <th className="py-3 px-4">Timestamp</th>
-                  <th className="py-3 px-4 text-right">Details</th>
+                  <td colSpan={5} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    Loading immutable audit trail from server...
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredLogs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-                  >
-                    <td className="py-3.5 px-4 font-mono font-semibold text-slate-900 dark:text-white">
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-[11px]">
-                        {log.action}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap">
+              ) : filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    No audit events found matching query.
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log) => (
+                  <tr key={log.id}>
+                    <td>{getActionBadge(log.action)}</td>
+                    <td style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>
                       {log.actor_id ? `${log.actor_id.substring(0, 8)}...` : "System / Anon"}
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap">
+                    <td style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>
                       {log.ip_address || "Internal"}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString()}
+                    <td style={{ color: "var(--text-muted)", fontSize: "12px", whiteSpace: "nowrap" }}>
+                      {log.created_at ? new Date(log.created_at).toLocaleString() : "-"}
                     </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button
+                        className="action-icon-btn"
                         onClick={() => setSelectedLog(log)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        aria-label="View Details"
+                        title="Inspect Event JSON"
+                        type="button"
                       >
-                        <Eye className="h-4 w-4" />
+                        <Eye style={{ width: 14, height: 14 }} />
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Detail Modal */}
+      {/* Audit Event JSON Inspector Modal */}
       {selectedLog && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3.5 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 sm:space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                Audit Event JSON Inspector
-              </h3>
+        <div className="admin-modal-overlay" onClick={() => setSelectedLog(null)}>
+          <div className="admin-modal-card" style={{ maxWidth: "620px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div className="brand-icon-wrap" style={{ width: 32, height: 32 }}>
+                  <History style={{ width: 16, height: 16 }} />
+                </div>
+                <div>
+                  <h3>Audit Event JSON Inspector</h3>
+                  <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>
+                    Event: {selectedLog.action}
+                  </p>
+                </div>
+              </div>
               <button
+                className="admin-modal-close-btn"
                 onClick={() => setSelectedLog(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label="Close Modal"
+                type="button"
               >
-                <X className="h-4 w-4" />
+                <X style={{ width: 16, height: 16 }} />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div className="flex flex-col xs:flex-row xs:justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-1">
-                <span className="text-slate-400">Event ID:</span>
-                <span className="font-mono text-slate-800 dark:text-slate-200 break-all">{selectedLog.id}</span>
-              </div>
-              <div className="flex flex-col xs:flex-row xs:justify-between py-1 border-b border-slate-100 dark:border-slate-800 gap-1">
-                <span className="text-slate-400">Action:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedLog.action}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ padding: "10px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    Event ID
+                  </span>
+                  <p style={{ fontFamily: "monospace", fontSize: "11px", marginTop: "2px", wordBreak: "break-all" }}>
+                    {selectedLog.id}
+                  </p>
+                </div>
+                <div style={{ padding: "10px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    Actor &amp; Origin
+                  </span>
+                  <p style={{ fontFamily: "monospace", fontSize: "11px", marginTop: "2px" }}>
+                    {selectedLog.actor_id ? `${selectedLog.actor_id.substring(0, 10)}...` : "System / Anon"} ({selectedLog.ip_address || "Internal"})
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">Payload Details</span>
-                <pre className="hash-font text-[11px] sm:text-xs text-slate-900 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 p-3 rounded-xl border border-slate-200 dark:border-slate-700 overflow-x-auto mt-1 max-h-[220px]">
-                  {JSON.stringify(selectedLog.details, null, 2)}
+              <div style={{ padding: "12px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    Payload Details
+                  </span>
+                  <button
+                    onClick={() => handleCopyJson(selectedLog.details)}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--brand-primary)", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700 }}
+                    type="button"
+                  >
+                    {copiedJson ? <Check style={{ width: 12, height: 12 }} /> : <Copy style={{ width: 12, height: 12 }} />}
+                    <span>{copiedJson ? "Copied" : "Copy JSON"}</span>
+                  </button>
+                </div>
+                <pre style={{ fontFamily: "monospace", fontSize: "11.5px", background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid var(--border-subtle)", overflowX: "auto", maxHeight: "240px" }}>
+                  {JSON.stringify(selectedLog.details, null, 2) || "{}"}
                 </pre>
               </div>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
               <button
+                className="admin-btn-primary"
                 onClick={() => setSelectedLog(null)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-navy-800 text-white text-xs font-semibold hover:bg-navy-700 min-h-[40px]"
+                type="button"
               >
                 Close
               </button>
@@ -202,6 +263,6 @@ export default function AdminAuditLogsPage() {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

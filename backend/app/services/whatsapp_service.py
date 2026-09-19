@@ -288,7 +288,7 @@ class WhatsAppService:
 
         cleaned = re.sub(r"[.!?,:;~]+$", "", normalized).strip()
         casual_phrases = {
-            "thanks", "thank you", "thx",
+            "thanks", "thank you", "thx", "thnx", "tnx", "thank u", "ty", "tysm", "tq", "thanks a lot",
             "okay", "ok",
             "sure", "got it",
             "bye", "goodbye", "see you",
@@ -712,6 +712,24 @@ class WhatsAppService:
     # ========================================================================
 
     @classmethod
+    def _format_date(cls, raw: Any) -> str:
+        """Helper to format date cleanly as 'DD Mon YYYY' or 'Date unavailable'."""
+        if not raw:
+            return "Date unavailable"
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            return dt.strftime("%d %b %Y")
+        except Exception:
+            s = str(raw).strip()
+            if len(s) >= 10 and s[:10].count("-") == 2:
+                try:
+                    dt = datetime.strptime(s[:10], "%Y-%m-%d")
+                    return dt.strftime("%d %b %Y")
+                except Exception:
+                    return s[:10]
+            return s or "Date unavailable"
+
+    @classmethod
     def format_verification_result(cls, result: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch result formatting based on verdict. Returns interactive payload."""
         verdict = result.get("verdict", "")
@@ -724,13 +742,16 @@ class WhatsAppService:
         if matched_content:
             merged_evidence["original_filename"] = matched_content.get("original_filename")
             merged_evidence["content_type"] = matched_content.get("content_type")
+            merged_evidence["status"] = matched_content.get("status")
+            merged_evidence["created_at"] = matched_content.get("created_at")
+            merged_evidence["revoked_at"] = matched_content.get("revoked_at") or matched_content.get("updated_at")
 
-        if verdict == VerificationVerdict.VERIFIED.value:
+        if verdict == VerificationVerdict.VERIFIED.value or verdict == "VERIFIED":
             payload = cls.format_verified_response(merged_evidence)
-        elif verdict == VerificationVerdict.SUSPICIOUS.value:
+        elif verdict == VerificationVerdict.SUSPICIOUS.value or verdict == "SUSPICIOUS":
             payload = cls.format_suspicious_response(merged_evidence)
-        elif verdict == VerificationVerdict.PROVEN_INVALID.value:
-            payload = cls.format_invalid_response()
+        elif verdict == VerificationVerdict.PROVEN_INVALID.value or verdict == "PROVEN_INVALID":
+            payload = cls.format_invalid_response(evidence=merged_evidence)
         else:
             payload = cls.format_unsigned_response()
 
@@ -762,24 +783,15 @@ class WhatsAppService:
             "audio": "audio",
             "document": "document",
             "text": "statement",
+            "pdf": "document",
         }
-        type_label = type_labels.get(content_type_raw, "document")
+        type_label = type_labels.get(content_type_raw, "video" if "video" in content_type_raw else "official release")
 
-        manifest = evidence.get("manifest_data") or {}
-        raw_ts = manifest.get("timestamp") or evidence.get("created_at")
-        formatted_date = "recently"
-        if raw_ts:
-            try:
-                dt = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
-                formatted_date = dt.strftime("%d %b %Y")
-            except Exception:
-                formatted_date = str(raw_ts)[:10]
-
-        body_text = (
-            f"✅ *Verified official content* — this {type_label} matches an official "
-            f"release from *{publisher}*, published {formatted_date}. "
-            f"It has not been edited or manipulated."
-        )
+        is_exact = evidence.get("sha256_match") is True
+        if is_exact:
+            body_text = f"✅ *VERIFIED*\n\nThis exactly matches an official {type_label} from *{publisher}*."
+        else:
+            body_text = f"✅ *VERIFIED*\n\nThis closely matches an official {type_label} from *{publisher}*."
 
         return {
             "body_text": body_text,
@@ -801,9 +813,20 @@ class WhatsAppService:
             or "Official Government Source"
         )
 
+        content_type_raw = str(evidence.get("content_type", "")).lower()
+        type_labels = {
+            "image": "image",
+            "video": "video",
+            "audio": "audio",
+            "document": "document",
+            "text": "statement",
+            "pdf": "document",
+        }
+        type_label = type_labels.get(content_type_raw, "video" if "video" in content_type_raw else "content")
+
         body_text = (
-            f"⚠️ *This appears to be a modified version* of official content from *{publisher}*. "
-            f"Parts may have been altered or taken out of context."
+            f"⚠️ *SUSPICIOUS*\n\n"
+            f"This looks like an edited version of an official *{publisher}* {type_label}, not the original."
         )
 
         return {
@@ -818,9 +841,9 @@ class WhatsAppService:
     def format_unsigned_response(cls) -> Dict[str, Any]:
         """Format UNSIGNED response as interactive message payload."""
         body_text = (
-            "❓ *We can't confirm this is official government content* — it isn't in our "
-            "verified records. This doesn't necessarily mean it's fake, only that no "
-            "government publisher has registered it."
+            "⚪ *NOT FOUND IN OUR REGISTRY*\n\n"
+            "We have no record of this from an official source.\n\n"
+            "This does not mean it is fake — we simply cannot confirm it."
         )
 
         return {
@@ -832,12 +855,31 @@ class WhatsAppService:
         }
 
     @classmethod
-    def format_invalid_response(cls, reason: str = "Invalid content or corrupted file.") -> Dict[str, Any]:
-        """Format INVALID response as interactive message payload."""
-        body_text = (
-            "🚫 *This does not match any official record* and shows signs of tampering. "
-            "Treat this content with caution."
-        )
+    def format_invalid_response(
+        cls,
+        reason: str = "",
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Format INVALID / PROVEN_INVALID response as interactive message payload."""
+        ev = evidence or {}
+        notice = str(ev.get("notice") or "").lower()
+        status = str(ev.get("status") or "").upper()
+
+        if "credential" in notice and ("revoked" in notice or "suspended" in notice):
+            body_text = (
+                "🚫 *NOT CURRENTLY TRUSTED*\n\n"
+                "The publisher's approval for this has been withdrawn."
+            )
+        elif status == "REVOKED" or ("content" in notice and "revoked" in notice):
+            body_text = (
+                "🚫 *NOT CURRENTLY TRUSTED*\n\n"
+                "This was official once, but has since been withdrawn."
+            )
+        else:
+            body_text = (
+                "🚫 *NOT CURRENTLY TRUSTED*\n\n"
+                "This does not pass our authenticity check."
+            )
 
         return {
             "body_text": body_text,
@@ -876,91 +918,236 @@ class WhatsAppService:
 
     @classmethod
     def format_proof_message(cls, result: Optional[Dict[str, Any]]) -> str:
-        """Format proof-on-tap message showing only signals actually present in the result."""
+        """
+        Format structured, server-derived 'How this was checked' verification proof.
+
+        Shows exactly the 4 key verification proofs:
+        1. SHA-256 / exact content comparison
+        2. Perceptual similarity (when available)
+        3. Digital signature (when available)
+        4. Hash-chain ledger integrity (when available)
+        """
         if not result:
             return (
-                "ℹ️ Verification proof details are unavailable.\n"
-                "Please submit the media or statement to verify again."
+                "How this was checked:\n\n"
+                "• Verification proof details are unavailable\n"
+                "Technical: No active verification session record found"
             )
 
         evidence = result.get("evidence_bundle") or {}
-        verdict = result.get("verdict", "")
-        lines: List[str] = ["*How this was checked:*", ""]
+        matched_content = result.get("matched_content") or {}
+        verdict = str(result.get("verdict") or "").upper()
 
-        # 1. SHA-256 hash match
-        if evidence.get("sha256_match") is True:
-            lines.append("• Matches the original file — exact match")
-            lines.append("  _Technical: SHA-256 hash match confirmed_")
-            lines.append("")
-        elif evidence.get("match_type") == "PERCEPTUAL_SIMILARITY":
-            lines.append("• File content differs from the original — not an exact copy")
-            lines.append("  _Technical: SHA-256 hash mismatch (altered or re-encoded)_")
-            lines.append("")
+        is_exact = evidence.get("sha256_match") is True
+        sim_score = evidence.get("perceptual_similarity_score") or evidence.get("similarity_score") or 0.0
+        f_sim = 0.0
+        try:
+            f_sim = float(sim_score)
+            sim_str = f"{f_sim:.2f}".rstrip("0").rstrip(".") if (f_sim % 1 != 0) else f"{int(f_sim)}"
+            int_sim = int(round(f_sim))
+        except Exception:
+            sim_str = str(sim_score).rstrip("%")
+            try:
+                int_sim = int(round(float(sim_str)))
+            except Exception:
+                int_sim = 0
 
-        # 2. Perceptual fingerprint match
-        perceptual_status = evidence.get("perceptual_match_status", "")
-        if perceptual_status == "EXACT_MATCH":
-            lines.append("• Looks and sounds like the original — exact match")
-            lines.append("  _Technical: Perceptual fingerprint (pHash/dHash) exact match_")
-            lines.append("")
-        elif perceptual_status == "SIMILAR_MATCH":
-            sim = evidence.get("perceptual_similarity_score") or evidence.get("similarity_score", 0)
-            cand_ph = evidence.get("perceptual_hash_matched")
-            if isinstance(cand_ph, dict) and cand_ph.get("media_type") == "PDF":
-                lines.append(f"• Document matches a registered publication — {int(sim)}% match")
-                lines.append(f"  _Technical: PDF document similarity {sim}% (content alteration detected)_")
+        notice = str(evidence.get("notice") or "").lower()
+        status = str(matched_content.get("status") or evidence.get("status") or "").upper()
+        is_content_revoked = status == "REVOKED" or ("content" in notice and "revoked" in notice)
+        is_cred_revoked = "credential" in notice and ("revoked" in notice or "suspended" in notice)
+
+        # 1. UNSIGNED / No Registry Match
+        if verdict == "UNSIGNED" or (not is_exact and evidence.get("match_type") == "NONE" and verdict != "PROVEN_INVALID"):
+            checks = [
+                "• File content does not match any registered official record\n"
+                "Technical: SHA-256 hash not found in official registry",
+
+                "• No comparable visual, acoustic, or textual match found\n"
+                "Technical: Perceptual fingerprint search yielded no match",
+
+                "• No verified provenance relationship was established\n"
+                "Technical: Unregistered in government provenance ledger",
+            ]
+            return "How this was checked:\n\n" + "\n\n".join(checks)
+
+        # 2. PROVEN_INVALID due to Content Revocation
+        if verdict == "PROVEN_INVALID" and is_content_revoked:
+            checks = []
+            # Proof 1: Content relationship
+            if not is_exact and f_sim > 0:
+                checks.append(
+                    f"• This content matches a previously registered official file — {int_sim}% match\n"
+                    f"Technical: Perceptual fingerprint similarity {sim_str}%"
+                )
             else:
-                lines.append(f"• Looks and sounds like the original — {int(sim)}% match")
-                lines.append(f"  _Technical: Perceptual fingerprint similarity {sim}%_")
-            lines.append("")
+                checks.append(
+                    "• This content matches a previously registered official file\n"
+                    "Technical: SHA-256 cryptographic hash match"
+                )
 
-        # 3. Ed25519 digital signature
-        if evidence.get("digital_signature") is not None:
-            if evidence.get("signature_valid") is True:
-                lines.append("• Digitally signed by the publisher — valid")
-                lines.append("  _Technical: Ed25519 cryptographic signature verified_")
-            else:
-                lines.append("• Digital signature check — failed")
-                lines.append("  _Technical: Ed25519 digital signature invalid or broken_")
-            lines.append("")
+            # Proof 2: Revocation Status
+            checks.append(
+                f"• The original publication has been officially withdrawn\n"
+                f"Technical: Registry status — {status or 'REVOKED'}"
+            )
 
-        # 4. C2PA provenance manifest
-        if evidence.get("manifest_data") is not None:
-            if evidence.get("manifest_valid") is True:
-                lines.append("• Official provenance record — valid")
-                lines.append("  _Technical: C2PA-standard provenance manifest authenticated_")
-            else:
-                lines.append("• Provenance record check — failed")
-                lines.append("  _Technical: C2PA provenance manifest validation failed_")
-            lines.append("")
-
-        # 5. Hash-chain ledger anchoring
-        if evidence.get("chain_block_id") is not None:
-            block_id = evidence.get("chain_block_id")
-            if evidence.get("chain_integrity") is True:
-                lines.append("• Recorded on tamper-proof ledger — confirmed")
-                lines.append(f"  _Technical: Hash-chain ledger block #{block_id} integrity confirmed_")
-            else:
-                lines.append("• Ledger record check — failed")
-                lines.append(f"  _Technical: Hash-chain ledger block #{block_id} integrity could not be confirmed_")
-            lines.append("")
-
-        # Fallback if no individual signals were present
-        if len(lines) <= 2:
-            if verdict == VerificationVerdict.UNSIGNED.value or verdict == "UNSIGNED":
-                lines.append("• Registry check — no matching records found")
-                lines.append("  _Technical: No SHA-256, fingerprint, or signature match in registry_")
-            elif verdict == VerificationVerdict.PROVEN_INVALID.value or verdict == "PROVEN_INVALID":
-                lines.append("• Authenticity check — failed")
-                lines.append("  _Technical: Cryptographic signature or manifest validation failed_")
-            else:
-                notice = evidence.get("notice", "")
-                if notice:
-                    lines.append(f"_{notice}_")
+            # Proof 3: Digital Signature
+            if "signature_valid" in evidence:
+                if evidence.get("signature_valid") is True:
+                    checks.append(
+                        "• The publisher's digital signature is valid\n"
+                        "Technical: Ed25519 cryptographic signature verified"
+                    )
                 else:
-                    lines.append("_No detailed verification signals available._")
+                    checks.append(
+                        "• Publisher signature could not be verified\n"
+                        "Technical: Ed25519 signature verification failed"
+                    )
 
-        return "\n".join(lines).strip()
+            # Proof 4: Ledger Integrity
+            if "chain_integrity" in evidence:
+                block_id = evidence.get("chain_block_id")
+                if evidence.get("chain_integrity") is True:
+                    if block_id is not None:
+                        checks.append(
+                            f"• The original record remains intact on the ledger\n"
+                            f"Technical: Hash-chain ledger block #{block_id} integrity confirmed"
+                        )
+                    else:
+                        checks.append(
+                            "• The original record remains intact on the ledger\n"
+                            "Technical: Hash-chain ledger integrity confirmed"
+                        )
+                else:
+                    checks.append(
+                        "• Tamper-resistant ledger verification failed\n"
+                        "Technical: Hash-chain ledger integrity check failed (broken or missing anchor)"
+                    )
+
+            return "How this was checked:\n\n" + "\n\n".join(checks)
+
+        # 3. PROVEN_INVALID due to Credential Revocation
+        if verdict == "PROVEN_INVALID" and is_cred_revoked:
+            checks = []
+            # Proof 1: Content relationship
+            if not is_exact and f_sim > 0:
+                checks.append(
+                    f"• This content matches a previously registered official file — {int_sim}% match\n"
+                    f"Technical: Perceptual fingerprint similarity {sim_str}%"
+                )
+            else:
+                checks.append(
+                    "• This content matches a previously registered official file\n"
+                    "Technical: SHA-256 cryptographic hash match"
+                )
+
+            # Proof 2: Credential Status
+            cred_status_label = "REVOKED" if "revoked" in notice else "SUSPENDED"
+            checks.append(
+                f"• The publishing authority authorization has been withdrawn\n"
+                f"Technical: Publisher credential status — {cred_status_label}"
+            )
+
+            # Proof 3: Digital Signature
+            if "signature_valid" in evidence:
+                if evidence.get("signature_valid") is True:
+                    checks.append(
+                        "• Signed at registration — signature valid\n"
+                        "Technical: Ed25519 cryptographic signature verified"
+                    )
+                else:
+                    checks.append(
+                        "• Publisher signature could not be verified\n"
+                        "Technical: Ed25519 signature verification failed"
+                    )
+
+            # Proof 4: Ledger Integrity
+            if "chain_integrity" in evidence:
+                block_id = evidence.get("chain_block_id")
+                if evidence.get("chain_integrity") is True:
+                    if block_id is not None:
+                        checks.append(
+                            f"• The original record remains intact on the ledger\n"
+                            f"Technical: Hash-chain ledger block #{block_id} integrity confirmed"
+                        )
+                    else:
+                        checks.append(
+                            "• The original record remains intact on the ledger\n"
+                            "Technical: Hash-chain ledger integrity confirmed"
+                        )
+                else:
+                    checks.append(
+                        "• Tamper-resistant ledger verification failed\n"
+                        "Technical: Hash-chain ledger integrity check failed (broken or missing anchor)"
+                    )
+
+            return "How this was checked:\n\n" + "\n\n".join(checks)
+
+        # 4. Standard Flow (VERIFIED, SUSPICIOUS, other PROVEN_INVALID)
+        checks = []
+
+        # 1. SHA-256 Check
+        if is_exact:
+            if verdict == "PROVEN_INVALID":
+                checks.append(
+                    "• Exact file content match with registered record\n"
+                    "Technical: SHA-256 cryptographic hash match"
+                )
+            else:
+                checks.append(
+                    "• File is an exact match to the registered original\n"
+                    "Technical: SHA-256 cryptographic hash match"
+                )
+        else:
+            checks.append(
+                "• File content differs from the original — not an exact copy\n"
+                "Technical: SHA-256 hash mismatch (altered or re-encoded)"
+            )
+
+        # 2. Perceptual Similarity Check (when available and not an exact match, or score provided)
+        if not is_exact and f_sim > 0:
+            checks.append(
+                f"• Looks and sounds like the original — {int_sim}% match\n"
+                f"Technical: Perceptual fingerprint similarity {sim_str}%"
+            )
+
+        # 3. Digital Signature Check
+        if "signature_valid" in evidence:
+            sig_valid = evidence.get("signature_valid")
+            if sig_valid is True:
+                checks.append(
+                    "• Digitally signed by the publisher — valid\n"
+                    "Technical: Ed25519 cryptographic signature verified"
+                )
+            elif sig_valid is False:
+                checks.append(
+                    "• Publisher signature could not be verified\n"
+                    "Technical: Ed25519 signature verification failed"
+                )
+
+        # 4. Hash-Chain Ledger Integrity Check
+        if "chain_integrity" in evidence:
+            chain_valid = evidence.get("chain_integrity")
+            block_id = evidence.get("chain_block_id")
+            if chain_valid is True:
+                if block_id is not None:
+                    checks.append(
+                        "• Recorded on tamper-resistant ledger — confirmed\n"
+                        f"Technical: Hash-chain ledger block #{block_id} integrity confirmed"
+                    )
+                else:
+                    checks.append(
+                        "• Recorded on tamper-resistant ledger — confirmed\n"
+                        "Technical: Hash-chain ledger integrity confirmed"
+                    )
+            elif chain_valid is False:
+                checks.append(
+                    "• Tamper-resistant ledger verification failed\n"
+                    "Technical: Hash-chain ledger integrity check failed (broken or missing anchor)"
+                )
+
+        return "How this was checked:\n\n" + "\n\n".join(checks)
 
     @classmethod
     def format_explainer_message(cls) -> str:

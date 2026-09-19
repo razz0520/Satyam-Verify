@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.class
@@ -37,11 +37,15 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Uploads
+# Uploads (Root & Nested)
 uploads/temp/*
 uploads/processed/*
 !uploads/temp/.gitkeep
 !uploads/processed/.gitkeep
+**/uploads/temp/*
+**/uploads/processed/*
+!**/uploads/temp/.gitkeep
+!**/uploads/processed/.gitkeep
 
 # Logs
 logs/*
@@ -64,3 +68,13 @@ coverage/
 .next/
 out/
 build/
+*.tsbuildinfo
+
+# Prototype HTML Files
+publihserFrontend.html
+signupHtml.html
+adminPortalFrontend.html
+
+# AWS Provisioning & Scratch Files
+acm_validation_record.json
+alb_provision_summary.json

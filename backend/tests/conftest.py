@@ -57,7 +57,8 @@ from app.services.auth_service import register_admin, register_publisher
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_test_database_initialized():
-    """Ensure provenance_test_db schema is created before test execution."""
+    """Ensure provenance_test_db schema is created fresh before test execution."""
+    Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
     yield
 

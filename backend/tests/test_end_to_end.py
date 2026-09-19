@@ -555,7 +555,9 @@ class TestProvenanceEndToEndCases:
 
         ev_mod = ver_mod_data["evidence_bundle"]
         assert ev_mod["sha256_match"] is False
-        assert ver_mod_data["verdict"] in [VerificationVerdict.SUSPICIOUS.value, VerificationVerdict.VERIFIED.value, VerificationVerdict.UNSIGNED.value]
+        assert ver_mod_data["verdict"] == VerificationVerdict.SUSPICIOUS.value
+        assert ev_mod.get("match_type") == "PERCEPTUAL_SIMILARITY"
+        assert ev_mod.get("similarity_score", 0) >= 70.0
 
         # -------------------------------------------------------------
         # 6. Verify unknown content -> UNSIGNED
@@ -607,14 +609,20 @@ class TestProvenanceEndToEndCases:
         assert record is not None
 
         if record.manifest:
-            record.manifest.digital_signature = "TAMPERED_INVALID_SIGNATURE_HEX"
-            db.commit()
+            orig_sig = record.manifest.digital_signature
+            try:
+                record.manifest.digital_signature = "TAMPERED_INVALID_SIGNATURE_HEX"
+                db.commit()
 
-        res_ver_tampered = client.post("/api/v1/verify", files={"file": ("citizen_upload.png", registered_image_bytes, "image/png")})
-        assert res_ver_tampered.status_code == 200
-        ver_tampered_data = res_ver_tampered.json()
-        ev_tamp = ver_tampered_data["evidence_bundle"]
-        assert ev_tamp.get("signature_valid") is False or ver_tampered_data["verdict"] in ["PROVEN_INVALID", "SUSPICIOUS", "UNSIGNED", "VERIFIED"]
+                res_ver_tampered = client.post("/api/v1/verify", files={"file": ("citizen_upload.png", registered_image_bytes, "image/png")})
+                assert res_ver_tampered.status_code == 200
+                ver_tampered_data = res_ver_tampered.json()
+                ev_tamp = ver_tampered_data["evidence_bundle"]
+                assert ver_tampered_data["verdict"] == "PROVEN_INVALID"
+                assert ev_tamp.get("signature_valid") is False
+            finally:
+                record.manifest.digital_signature = orig_sig
+                db.commit()
 
     def test_re_registration_after_revocation_e2e(self, client: TestClient, db: Session):
         """Test that registering the same file again after revocation makes the new ACTIVE record authoritative."""
@@ -686,6 +694,116 @@ class TestProvenanceEndToEndCases:
         assert data_v_active["evidence_bundle"]["sha256_match"] is True
         assert data_v_active["evidence_bundle"]["signature_valid"] is True
         assert data_v_active["matched_content"]["id"] == content_id_2
+
+    def test_revoked_perceptual_transcoded_media_proven_invalid(self, client: TestClient, db: Session):
+        """
+        Regression Test for Revoked Media WhatsApp/Perceptual Verification Bug:
+        1. Register official media -> ACTIVE
+        2. Transcoded/WhatsApp-recompressed media (different SHA-256) -> VERIFIED (perceptual)
+        3. Revoke publication -> REVOKED
+        4. Transcoded media with different SHA-256 MUST return PROVEN_INVALID (not UNSIGNED)
+        5. Re-register media -> new ACTIVE
+        6. Transcoded media MUST return VERIFIED (new ACTIVE takes precedence)
+        """
+        # 1. Setup publisher
+        pub_email = f"publisher_{uuid.uuid4().hex[:8]}@pib.gov.in"
+        pub_password = "SecurePassword123!"
+        reg_user_res = client.post(
+            "/api/v1/auth/register",
+            json={
+                "email": pub_email,
+                "password": pub_password,
+                "organization_name": "Press Information Bureau",
+                "organization_domain": "pib.gov.in",
+                "role": "PUBLISHER",
+            },
+        )
+        assert reg_user_res.status_code == 201
+        login_res = client.post(
+            "/api/v1/auth/login",
+            json={"email": pub_email, "password": pub_password},
+        )
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 2. Register initial official image
+        raw_image_bytes = generate_sample_image(f"OFFICIAL PRESS STATEMENT {uuid.uuid4().hex}", size=(250, 250))
+        reg_res = client.post(
+            "/api/v1/content/register",
+            files={"file": ("press_release.png", raw_image_bytes, "image/png")},
+            headers=headers,
+        )
+        assert reg_res.status_code == 201
+        content_id_1 = reg_res.json()["content_id"]
+
+        # 3. Simulate WhatsApp transcoded / re-compressed media (different binary bytes & SHA, but identical visual content)
+        # Using PIL to re-save with slight compression/quality variation to ensure distinct binary SHA-256
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw_image_bytes))
+        transcoded_buffer = io.BytesIO()
+        img.save(transcoded_buffer, format="JPEG", quality=90)
+        transcoded_bytes = transcoded_buffer.getvalue()
+
+        assert transcoded_bytes != raw_image_bytes
+        import hashlib
+        raw_sha = hashlib.sha256(raw_image_bytes).hexdigest()
+        transcoded_sha = hashlib.sha256(transcoded_bytes).hexdigest()
+        assert raw_sha != transcoded_sha
+
+        # 4. Verify transcoded media when ACTIVE -> VERIFIED via PERCEPTUAL_SIMILARITY
+        res_v_active = client.post(
+            "/api/v1/verify",
+            files={"file": ("whatsapp_received.jpg", transcoded_bytes, "image/jpeg")},
+        )
+        assert res_v_active.status_code == 200
+        active_data = res_v_active.json()
+        assert active_data["verdict"] == "VERIFIED"
+        assert active_data["evidence_bundle"]["sha256_match"] is False
+        assert active_data["evidence_bundle"]["match_type"] == "PERCEPTUAL_SIMILARITY"
+        assert active_data["evidence_bundle"]["similarity_score"] >= 95.0
+        assert active_data["matched_content"]["id"] == content_id_1
+
+        # 5. Revoke publication -> ContentStatus.REVOKED
+        c1_uuid = uuid.UUID(str(content_id_1))
+        rec1 = db.execute(select(RegisteredContent).where(RegisteredContent.id == c1_uuid)).scalar_one_or_none()
+        assert rec1 is not None
+        rec1.status = ContentStatus.REVOKED
+        db.commit()
+
+        # 6. Verify transcoded media when REVOKED -> MUST RETURN PROVEN_INVALID (not UNSIGNED!)
+        res_v_revoked = client.post(
+            "/api/v1/verify",
+            files={"file": ("whatsapp_received.jpg", transcoded_bytes, "image/jpeg")},
+        )
+        assert res_v_revoked.status_code == 200
+        revoked_data = res_v_revoked.json()
+        assert revoked_data["verdict"] == "PROVEN_INVALID"
+        assert revoked_data["evidence_bundle"]["sha256_match"] is False
+        assert revoked_data["evidence_bundle"]["match_type"] == "PERCEPTUAL_SIMILARITY"
+        assert revoked_data["matched_content"]["id"] == content_id_1
+        assert "revoked" in str(revoked_data["evidence_bundle"]["notice"]).lower()
+
+        # 7. Re-register same content -> creates new ACTIVE record
+        res_rereg = client.post(
+            "/api/v1/content/register",
+            files={"file": ("press_release_reregistered.png", raw_image_bytes, "image/png")},
+            headers=headers,
+        )
+        assert res_rereg.status_code == 201
+        content_id_2 = res_rereg.json()["content_id"]
+        assert content_id_2 != content_id_1
+
+        # 8. Verify transcoded media again -> new ACTIVE record takes precedence -> VERIFIED
+        res_v_rereg = client.post(
+            "/api/v1/verify",
+            files={"file": ("whatsapp_received.jpg", transcoded_bytes, "image/jpeg")},
+        )
+        assert res_v_rereg.status_code == 200
+        rereg_data = res_v_rereg.json()
+        assert rereg_data["verdict"] == "VERIFIED"
+        assert rereg_data["evidence_bundle"]["match_type"] == "PERCEPTUAL_SIMILARITY"
+        assert rereg_data["matched_content"]["id"] == content_id_2
 
 
 
@@ -797,3 +915,144 @@ class TestSecurity:
         res = client.get(f"/api/v1/content/{sql_payload}")
         assert res.status_code in [400, 404, 422]
         assert "syntax error" not in res.text.lower()
+
+
+# ============================================================================
+# 6. CRYPTOGRAPHIC SIGNATURE TEST HARDENING (PHASE 1)
+# ============================================================================
+
+class TestForgedSignatureHardening:
+    """Strict security tests proving that tampering with a validly registered
+    item's Ed25519 digital signature results in PROVEN_INVALID across all media types.
+    """
+
+    def test_image_forged_signature_proven_invalid(self, db: Session):
+        """Image: Tampered Ed25519 digital signature -> PROVEN_INVALID."""
+        uid = uuid.uuid4().hex[:6]
+        email = f"img_forgery_{uid}@gov.in"
+        user = register_publisher(
+            db=db,
+            email=email,
+            password="Password123!",
+            organization_name="Ministry of Information",
+            organization_domain="gov.in",
+        )
+        img_bytes = generate_sample_image(f"OFFICIAL ANNOUNCEMENT {uid}")
+        upload = UploadFile(filename=f"announcement_{uid}.png", file=io.BytesIO(img_bytes))
+        registered = register_content(db=db, publisher=user, upload_file=upload)
+
+        # Tamper stored digital signature only
+        orig_sig = registered.manifest.digital_signature
+        try:
+            registered.manifest.digital_signature = "TAMPERED_INVALID_ED25519_SIGNATURE_HEX"
+            db.commit()
+
+            upload_verify = UploadFile(filename=f"announcement_{uid}.png", file=io.BytesIO(img_bytes))
+            res = verify_file(db=db, upload_file=upload_verify, filename=f"announcement_{uid}.png")
+
+            assert res["verdict"] == VerificationVerdict.PROVEN_INVALID.value
+            assert res["evidence_bundle"]["signature_valid"] is False
+        finally:
+            registered.manifest.digital_signature = orig_sig
+            db.commit()
+
+    def test_pdf_forged_signature_proven_invalid(self, db: Session):
+        """PDF: Tampered Ed25519 digital signature -> PROVEN_INVALID."""
+        uid = uuid.uuid4().hex[:6]
+        email = f"pdf_forgery_{uid}@gov.in"
+        user = register_publisher(
+            db=db,
+            email=email,
+            password="Password123!",
+            organization_name="Ministry of Finance",
+            organization_domain="fin.gov.in",
+        )
+        pdf_bytes = generate_sample_pdf(f"Government Gazette Order No. {uid}/2026")
+        upload = UploadFile(filename=f"order_{uid}.pdf", file=io.BytesIO(pdf_bytes))
+        registered = register_content(db=db, publisher=user, upload_file=upload)
+
+        # Tamper stored digital signature only
+        orig_sig = registered.manifest.digital_signature
+        try:
+            registered.manifest.digital_signature = "TAMPERED_INVALID_ED25519_SIGNATURE_HEX"
+            db.commit()
+
+            upload_verify = UploadFile(filename=f"order_{uid}.pdf", file=io.BytesIO(pdf_bytes))
+            res = verify_file(db=db, upload_file=upload_verify, filename=f"order_{uid}.pdf")
+
+            assert res["verdict"] == VerificationVerdict.PROVEN_INVALID.value
+            assert res["evidence_bundle"]["signature_valid"] is False
+        finally:
+            registered.manifest.digital_signature = orig_sig
+            db.commit()
+
+    def test_audio_forged_signature_proven_invalid(self, db: Session):
+        """Audio: Tampered Ed25519 digital signature -> PROVEN_INVALID."""
+        uid = uuid.uuid4().hex[:6]
+        email = f"audio_forgery_{uid}@gov.in"
+        user = register_publisher(
+            db=db,
+            email=email,
+            password="Password123!",
+            organization_name="All India Radio",
+            organization_domain="air.gov.in",
+        )
+        audio_bytes = generate_sample_audio(duration_sec=1.5, sample_rate=16000, freq=440.0)
+        upload = UploadFile(filename=f"broadcast_{uid}.wav", file=io.BytesIO(audio_bytes))
+        registered = register_content(db=db, publisher=user, upload_file=upload)
+
+        # Tamper stored digital signature only
+        orig_sig = registered.manifest.digital_signature
+        try:
+            registered.manifest.digital_signature = "TAMPERED_INVALID_ED25519_SIGNATURE_HEX"
+            db.commit()
+
+            upload_verify = UploadFile(filename=f"broadcast_{uid}.wav", file=io.BytesIO(audio_bytes))
+            res = verify_file(db=db, upload_file=upload_verify, filename=f"broadcast_{uid}.wav")
+
+            assert res["verdict"] == VerificationVerdict.PROVEN_INVALID.value
+            assert res["evidence_bundle"]["signature_valid"] is False
+        finally:
+            registered.manifest.digital_signature = orig_sig
+            db.commit()
+
+    def test_video_forged_signature_proven_invalid(self, db: Session, tmp_path):
+        """Video: Tampered Ed25519 digital signature -> PROVEN_INVALID."""
+        import cv2
+
+        uid = uuid.uuid4().hex[:6]
+        video_path = str(tmp_path / f"video_{uid}.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(video_path, fourcc, 10.0, (120, 120))
+        for i in range(20):
+            frame = np.zeros((120, 120, 3), dtype=np.uint8)
+            cv2.circle(frame, (30 + i * 2, 60), 20, (255, 200, 50), -1)
+            out.write(frame)
+        out.release()
+
+        email = f"video_forgery_{uid}@gov.in"
+        user = register_publisher(
+            db=db,
+            email=email,
+            password="Password123!",
+            organization_name="Doordarshan National",
+            organization_domain="dd.gov.in",
+        )
+        with open(video_path, "rb") as f:
+            upload = UploadFile(filename=f"briefing_{uid}.mp4", file=io.BytesIO(f.read()))
+            registered = register_content(db=db, publisher=user, upload_file=upload)
+
+        # Tamper stored digital signature only
+        orig_sig = registered.manifest.digital_signature
+        try:
+            registered.manifest.digital_signature = "TAMPERED_INVALID_ED25519_SIGNATURE_HEX"
+            db.commit()
+
+            res = verify_file(db=db, upload_file=video_path, filename=f"briefing_{uid}.mp4")
+
+            assert res["verdict"] == VerificationVerdict.PROVEN_INVALID.value
+            assert res["evidence_bundle"]["signature_valid"] is False
+        finally:
+            registered.manifest.digital_signature = orig_sig
+            db.commit()
+

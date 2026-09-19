@@ -2,170 +2,297 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { StatsCard } from "@/components/StatsCard";
-import { Badge } from "@/components/Badge";
-import { HashChainVisualizer } from "@/components/HashChainVisualizer";
-import { TableSkeleton } from "@/components/LoadingSkeleton";
-import { useAuthStore } from "@/services/authStore";
 import { api } from "@/services/api";
+import { usePublisherStore } from "@/services/publisherStore";
 import {
-  FilePlus2,
   FileText,
-  KeyRound,
-  ShieldCheck,
-  CheckCircle2,
-  Clock,
+  CheckCircle,
+  Users,
   Layers,
-  ArrowUpRight,
+  ShieldCheck,
+  Film,
+  Music,
+  Image as ImageIcon,
+  Type,
+  Eye,
+  AlertTriangle,
 } from "lucide-react";
+import { ProvenanceInspectionModal } from "@/components/ProvenanceInspectionModal";
 
-export default function DashboardPage() {
-  const { user } = useAuthStore();
-  const [stats, setStats] = useState<any>(null);
-  const [recentContent, setRecentContent] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function DashboardOverviewPage() {
+  const { overviewStats, ledgerIntegrity, recentPublications, setOverviewData } = usePublisherStore();
+  const [stats, setStats] = useState<any>(overviewStats);
+  const [integrity, setIntegrity] = useState<any>(ledgerIntegrity);
+  const [recentContent, setRecentContent] = useState<any[]>(recentPublications);
+  const [loading, setLoading] = useState(!overviewStats);
+  const [error, setError] = useState<string | null>(null);
+  const [inspectItem, setInspectItem] = useState<any | null>(null);
+
+  const loadOverviewData = async () => {
+    if (!overviewStats && !stats) setLoading(true);
+    setError(null);
+    try {
+      const [statusRes, integrityRes, contentRes] = await Promise.all([
+        api.get("/status").catch(() => ({ data: null })),
+        api.get("/registry/integrity").catch(() => ({ data: null })),
+        api.get("/content?limit=5").catch(() => ({ data: { items: [] } })),
+      ]);
+
+      const freshStats = statusRes.data || stats;
+      const freshIntegrity = integrityRes.data || integrity;
+      const freshContent = contentRes.data?.items || recentContent;
+
+      setStats(freshStats);
+      setIntegrity(freshIntegrity);
+      setRecentContent(freshContent);
+      setOverviewData(freshStats, freshIntegrity, freshContent);
+    } catch (err: any) {
+      console.error("Failed to load dashboard data", err);
+      if (!stats) setError("Failed to load live server data. Please ensure backend is running.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadDashboardData() {
-      try {
-        const [contentRes, statusRes] = await Promise.all([
-          api.get("/content?limit=5"),
-          api.get("/status"),
-        ]);
-        setRecentContent(contentRes.data.items || []);
-        setStats(statusRes.data);
-      } catch (err) {
-        console.error("Dashboard data fetch error", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadDashboardData();
+    loadOverviewData();
   }, []);
 
+  const getMediaIcon = (type: string) => {
+    switch (type?.toUpperCase()) {
+      case "VIDEO":
+        return <Film style={{ width: 19, height: 19 }} />;
+      case "AUDIO":
+        return <Music style={{ width: 19, height: 19 }} />;
+      case "IMAGE":
+        return <ImageIcon style={{ width: 19, height: 19 }} />;
+      case "TEXT":
+        return <Type style={{ width: 19, height: 19 }} />;
+      default:
+        return <FileText style={{ width: 19, height: 19 }} />;
+    }
+  };
+
   return (
-    <div className="space-y-6 sm:space-y-8 max-w-7xl mx-auto w-full">
-      {/* Top Welcome Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div className="min-w-0">
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white truncate">
-            Welcome, {user?.organization_name || "Publisher"}
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-            Government Provenance Console • {user?.email}
+    <section id="view-overview" className="tab-page active-view">
+      {/* Page Header */}
+      <header className="page-header">
+        <h1>Welcome to SatyamVerify Publisher Portal</h1>
+      </header>
+
+      {error && (
+        <div
+          style={{
+            padding: "14px 18px",
+            borderRadius: "16px",
+            background: "rgba(239, 68, 68, 0.1)",
+            border: "1px solid rgba(239, 68, 68, 0.25)",
+            color: "#b91c1c",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            fontSize: "13px",
+            marginBottom: "16px",
+          }}
+        >
+          <AlertTriangle style={{ width: 18, height: 18, flexShrink: 0 }} />
+          <span>{error}</span>
+          <button
+            onClick={loadOverviewData}
+            className="primary-button"
+            style={{ marginLeft: "auto", minHeight: "32px", padding: "0 12px", fontSize: "11px" }}
+            type="button"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* 3 Top Statistics Cards */}
+      <section className="stats-grid">
+        {/* Total Publications */}
+        <article className="stat-card panel">
+          <div className="stat-head">
+            <span>Total Publications</span>
+            <div className="stat-icon">
+              <FileText style={{ width: 18, height: 18 }} />
+            </div>
+          </div>
+          <strong>{stats ? stats.total_registered_content : (loading ? "..." : 0)}</strong>
+          <p className="success-copy">
+            <i></i>Live in immutable registry
           </p>
+        </article>
+
+        {/* Ledger Verifications */}
+        <article className="stat-card emerald-card">
+          <div className="stat-head">
+            <span>Ledger Verifications</span>
+            <div className="stat-icon">
+              <CheckCircle style={{ width: 18, height: 18 }} />
+            </div>
+          </div>
+          <strong>{stats ? stats.total_verifications : (loading ? "..." : 0)}</strong>
+          <p>96.5% Citizen inquiries served</p>
+        </article>
+
+        {/* Active Publishers */}
+        <article className="stat-card panel">
+          <div className="stat-head">
+            <span>Active Publishers</span>
+            <div className="stat-icon">
+              <Users style={{ width: 18, height: 18 }} />
+            </div>
+          </div>
+          <strong>{stats ? stats.active_publishers : (loading ? "..." : 1)}</strong>
+          <p>Authorized government agencies</p>
+        </article>
+      </section>
+
+      {/* Hash-Chain Ledger Anchor */}
+      <section className="content-card panel">
+        <div className="section-heading">
+          <div className="section-title">
+            <div className="section-icon">
+              <Layers style={{ width: 18, height: 18 }} />
+            </div>
+            <div>
+              <h2>Hash-Chain Ledger Anchor</h2>
+              <p>
+                Ledger Height:{" "}
+                <b>
+                  {integrity
+                    ? `${integrity.total_blocks} Entries`
+                    : stats
+                    ? `${stats.total_registered_content} Entries`
+                    : (loading ? "..." : "0 Entries")}
+                </b>
+              </p>
+            </div>
+          </div>
+          <span className="verified-pill">
+            <ShieldCheck style={{ width: 14, height: 14 }} />
+            <span>
+              {integrity?.is_valid !== false ? "Integrity Verified" : "Audit Alert"}
+            </span>
+          </span>
         </div>
 
-        <Link
-          href="/dashboard/register-content"
-          className="inline-flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-navy-800 hover:bg-navy-700 text-white font-bold text-xs transition-all shadow-md hover:shadow-lg w-full sm:w-fit text-center min-h-[44px]"
-        >
-          <FilePlus2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
-          <span>Register New Content</span>
-        </Link>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-5">
-        <StatsCard
-          title="Total Publications"
-          value={stats?.total_registered_content ?? 0}
-          description="In immutable registry"
-          icon={FileText}
-          trend={{ value: "Live", isPositive: true }}
-        />
-        <StatsCard
-          title="Ledger Verifications"
-          value={stats?.total_verifications ?? 0}
-          description="Citizen inquiries served"
-          icon={CheckCircle2}
-          trend={{ value: "99.8%", isPositive: true }}
-        />
-        <StatsCard
-          title="Active Publishers"
-          value={stats?.active_publishers ?? 1}
-          description="Authorized government agencies"
-          icon={ShieldCheck}
-        />
-        <StatsCard
-          title="Hash Chain Ledger"
-          value={stats?.registry_integrity ? "Secure" : "Warning"}
-          description="Zero tampering detected"
-          icon={Layers}
-          trend={{ value: "100%", isPositive: true }}
-        />
-      </div>
-
-      {/* Immutable Hash Chain Visualizer */}
-      <HashChainVisualizer />
-
-      {/* Recent Publications Table */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-4">
-        <div className="flex flex-col xs:flex-row xs:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-              Recent Official Publications
-            </h3>
-            <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
-              Latest items signed with Ed25519 and anchored to the ledger
-            </p>
+        <div className="anchor-grid">
+          <div className="anchor-box">
+            <div className="anchor-label">
+              <span>Genesis Anchor</span>
+              <b>ROOT CONSTANT</b>
+            </div>
+            <div className="hash-well">
+              {integrity?.genesis_hash ||
+                "0000000000000000000000000000000000000000000000000000000000000000"}
+            </div>
           </div>
+          <div className="anchor-box">
+            <div className="anchor-label">
+              <span>Current Ledger Head</span>
+              <b className="latest">LATEST SIGNED</b>
+            </div>
+            <div className="hash-well current">
+              {integrity?.latest_hash || (loading && !stats ? "..." : "No transactions recorded yet")}
+            </div>
+          </div>
+        </div>
+      </section>
 
+      {/* Recent Official Publications */}
+      <section className="content-card panel">
+        <div className="section-heading">
+          <div className="section-title">
+            <div className="section-icon">
+              <FileText style={{ width: 18, height: 18 }} />
+            </div>
+            <div>
+              <h2>Recent Official Publications</h2>
+            </div>
+          </div>
           <Link
             href="/dashboard/content"
-            className="text-xs font-semibold text-navy-800 dark:text-navy-300 hover:underline inline-flex items-center gap-1 w-fit"
+            className="primary-button"
+            style={{ minHeight: "38px", padding: "0 16px", fontSize: "10px" }}
           >
-            <span>View All Content</span>
-            <ArrowUpRight className="h-3.5 w-3.5 flex-shrink-0" />
+            View All
           </Link>
         </div>
 
-        {loading ? (
-          <TableSkeleton rows={4} />
-        ) : recentContent.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 text-xs">
-            No registered content yet. Click &quot;Register New Content&quot; above to anchor your first publication.
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-            <table className="w-full text-left text-xs min-w-[550px]">
-              <thead className="text-[11px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">Filename / Media</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">SHA-256 Hash</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {recentContent.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-                  >
-                    <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white max-w-[200px] truncate">
-                      {item.original_filename}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 uppercase">
-                      {item.content_type}
-                    </td>
-                    <td className="py-3.5 px-4 hash-font text-slate-600 dark:text-slate-300">
-                      {item.sha256_hash.substring(0, 16)}...
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <Badge variant={item.status}>{item.status}</Badge>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : "Just now"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+        <div className="publication-list">
+          {loading && recentContent.length === 0 ? (
+            <div style={{ padding: "32px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" }}>
+              Retrieving cryptographic publication records...
+            </div>
+          ) : recentContent.length === 0 ? (
+            <div style={{ padding: "36px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" }}>
+              No publications registered yet. Use the{" "}
+              <Link href="/dashboard/register-content" style={{ color: "var(--green)", fontWeight: 700 }}>
+                Register Content
+              </Link>{" "}
+              workflow to anchor your first official asset.
+            </div>
+          ) : (
+            recentContent.map((item) => {
+              const isRevoked = item.status === "REVOKED";
+              const shortHash = item.sha256_hash
+                ? `${item.sha256_hash.substring(0, 8)}...${item.sha256_hash.substring(item.sha256_hash.length - 3)}`
+                : "None";
+              const formattedDate = item.created_at
+                ? new Date(item.created_at).toLocaleDateString()
+                : "Confirmed";
+
+              return (
+                <div key={item.id} className="publication-row">
+                  <div className="publication-main">
+                    <div className="file-icon">{getMediaIcon(item.content_type)}</div>
+                    <div className="publication-copy">
+                      <p
+                        style={
+                          isRevoked
+                            ? { textDecoration: "line-through", color: "var(--text-secondary)" }
+                            : undefined
+                        }
+                      >
+                        {item.original_filename}
+                      </p>
+                      <div className="publication-meta">
+                        <span className="type-tag">{item.content_type || "MEDIA"}</span>
+                        <span className="hash">{shortHash}</span>
+                        <span className="hash">{formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="publication-actions">
+                    <span className={`status ${isRevoked ? "revoked" : ""}`}>
+                      <i></i> {item.status || "ACTIVE"}
+                    </span>
+                    <button
+                      className="action-eye-btn"
+                      title="Inspect Hash Proof"
+                      onClick={() => setInspectItem(item)}
+                      type="button"
+                      aria-label="Inspect Proof"
+                    >
+                      <Eye style={{ width: 14, height: 14 }} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      {/* Provenance Inspection Modal */}
+      {inspectItem && (
+        <ProvenanceInspectionModal
+          item={inspectItem}
+          onClose={() => setInspectItem(null)}
+        />
+      )}
+    </section>
   );
 }

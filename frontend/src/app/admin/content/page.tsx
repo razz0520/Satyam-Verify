@@ -1,38 +1,41 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Badge } from "@/components/Badge";
-import { TableSkeleton } from "@/components/LoadingSkeleton";
+import { useAdminStore } from "@/services/adminStore";
 import { api } from "@/services/api";
 import { toast } from "sonner";
 import {
-  FileText,
   Search,
-  RefreshCw,
   Eye,
-  ShieldCheck,
-  Ban,
   X,
-  Layers,
+  Copy,
+  Check,
+  Circle,
+  FileCode,
+  ShieldCheck,
 } from "lucide-react";
 
 export default function AdminContentPage() {
-  const [contentList, setContentList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { contentList, setContentList } = useAdminStore();
+  const [items, setItems] = useState<any[]>(contentList);
+  const [loading, setLoading] = useState(contentList.length === 0);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
+  const [copiedHash, setCopiedHash] = useState(false);
 
   const fetchContent = async () => {
-    setLoading(true);
+    if (items.length === 0) setLoading(true);
     try {
       let url = "/content?limit=100";
       if (statusFilter) url += `&status=${statusFilter}`;
       const res = await api.get(url);
-      setContentList(res.data.items || []);
+      const list = res.data.items || [];
+      setItems(list);
+      setContentList(list);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load registry content.");
+      toast.error("Failed to load registry master content ledger.");
     } finally {
       setLoading(false);
     }
@@ -42,53 +45,62 @@ export default function AdminContentPage() {
     fetchContent();
   }, [statusFilter]);
 
-  const filteredItems = contentList.filter((item) => {
+  const handleCopyHash = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedHash(true);
+    toast.success("SHA-256 Hash copied to clipboard!");
+    setTimeout(() => setCopiedHash(false), 2000);
+  };
+
+  const filteredItems = items.filter((item) => {
     const term = searchTerm.toLowerCase();
     return (
-      item.original_filename.toLowerCase().includes(term) ||
-      item.sha256_hash.toLowerCase().includes(term)
+      (item.original_filename && item.original_filename.toLowerCase().includes(term)) ||
+      (item.sha256_hash && item.sha256_hash.toLowerCase().includes(term)) ||
+      (item.publisher_id && item.publisher_id.toLowerCase().includes(term))
     );
   });
 
-  return (
-    <div className="space-y-5 sm:space-y-6 max-w-7xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">
-            Registry Master Content Ledger
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-            Global repository of signed official publications across all government publishers
-          </p>
-        </div>
+  const getTypeStyle = (type: string) => {
+    switch (type?.toUpperCase()) {
+      case "VIDEO":
+        return { color: "#4338ca", fontWeight: 800 };
+      case "AUDIO":
+        return { color: "var(--brand-primary)", fontWeight: 800 };
+      case "TEXT":
+        return { color: "#b45309", fontWeight: 800 };
+      case "IMAGE":
+        return { color: "#b91c1c", fontWeight: 800 };
+      default:
+        return { color: "var(--text-main)", fontWeight: 800 };
+    }
+  };
 
-        <button
-          onClick={fetchContent}
-          className="p-2 sm:p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors w-full sm:w-fit min-h-[40px]"
-        >
-          <RefreshCw className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>Refresh Ledger</span>
-        </button>
+  return (
+    <section id="view-registry" className="view-pane">
+      {/* Page Header */}
+      <div className="view-header">
+        <div className="view-title">
+          <h2>Registry Master Content Ledger</h2>
+          <p>Global repository of signed official publications across all government publishers</p>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-        <div className="relative">
-          <Search className="h-4 w-4 text-slate-400 absolute left-3 top-3" />
+      {/* Filter Bar */}
+      <div className="filter-bar-clean">
+        <div className="search-input-clean">
+          <Search style={{ width: 16, height: 16, color: "#9aa1a9" }} />
           <input
             type="text"
+            placeholder="Search by filename or SHA-256 hash..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by filename or hash..."
-            className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
           />
         </div>
-
         <select
+          className="select-pill-clean"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-xl px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500 min-h-[38px]"
         >
           <option value="">All Statuses</option>
           <option value="ACTIVE">Active</option>
@@ -97,109 +109,180 @@ export default function AdminContentPage() {
         </select>
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-4">
-        {loading ? (
-          <TableSkeleton rows={6} />
-        ) : filteredItems.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 text-xs">
-            No registered content records in ledger.
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-            <table className="w-full text-left text-xs min-w-[650px]">
-              <thead className="text-[11px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">
+      {/* Clean Table Container */}
+      <div className="table-clean-container">
+        <div className="table-scroll-wrap">
+          <table className="clean-table">
+            <thead>
+              <tr>
+                <th>Filename</th>
+                <th>Publisher ID</th>
+                <th>Type</th>
+                <th>SHA-256 Hash</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && items.length === 0 ? (
                 <tr>
-                  <th className="py-3 px-4">Filename</th>
-                  <th className="py-3 px-4">Publisher ID</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">SHA-256 Hash</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    Loading registry content from server...
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredItems.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-                  >
-                    <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white max-w-[180px] truncate">
-                      {item.original_filename}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500 whitespace-nowrap">
-                      {item.publisher_id ? `${item.publisher_id.substring(0, 8)}...` : "-"}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono uppercase text-slate-500">
-                      {item.content_type}
-                    </td>
-                    <td className="py-3.5 px-4 hash-font text-slate-600 dark:text-slate-300">
-                      {item.sha256_hash.substring(0, 16)}...
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <Badge variant={item.status}>{item.status}</Badge>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-400 whitespace-nowrap">
-                      {item.created_at ? new Date(item.created_at).toLocaleDateString() : "-"}
-                    </td>
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => setSelectedItem(item)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                        aria-label="View Details"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ) : filteredItems.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    No registered content records found matching query.
+                  </td>
+                </tr>
+              ) : (
+                filteredItems.map((item) => {
+                  const isRevoked = item.status === "REVOKED";
+                  const isSuperseded = item.status === "SUPERSEDED";
+
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <strong>{item.original_filename}</strong>
+                      </td>
+                      <td style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>
+                        {item.publisher_id ? `${item.publisher_id.substring(0, 8)}...` : "-"}
+                      </td>
+                      <td>
+                        <span style={{ fontSize: "11px", ...getTypeStyle(item.content_type) }}>
+                          {item.content_type}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>
+                        {item.sha256_hash ? `${item.sha256_hash.substring(0, 16)}...` : "-"}
+                      </td>
+                      <td>
+                        {isRevoked ? (
+                          <span className="revoked-badge">
+                            <Circle style={{ width: 6, height: 6, fill: "currentColor" }} /> REVOKED
+                          </span>
+                        ) : isSuperseded ? (
+                          <span className="role-badge" style={{ background: "#fef3c7", color: "#b45309" }}>
+                            SUPERSEDED
+                          </span>
+                        ) : (
+                          <span className="active-badge">
+                            <Circle style={{ width: 6, height: 6, fill: "currentColor" }} /> ACTIVE
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "12px", whiteSpace: "nowrap" }}>
+                        {item.created_at ? new Date(item.created_at).toLocaleDateString() : "-"}
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button
+                          className="action-icon-btn"
+                          onClick={() => setSelectedItem(item)}
+                          title="Inspect Ledger Manifest & Hashes"
+                          type="button"
+                        >
+                          <Eye style={{ width: 14, height: 14 }} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Modal */}
+      {/* Ledger Manifest Inspector Modal */}
       {selectedItem && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3.5 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 max-w-xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 sm:space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
-                Ledger Manifest Inspector
-              </h3>
+        <div className="admin-modal-overlay" onClick={() => setSelectedItem(null)}>
+          <div className="admin-modal-card" style={{ maxWidth: "620px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div className="brand-icon-wrap" style={{ width: 32, height: 32 }}>
+                  <ShieldCheck style={{ width: 16, height: 16 }} />
+                </div>
+                <div>
+                  <h3>Ledger Manifest Inspector</h3>
+                  <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>
+                    {selectedItem.original_filename}
+                  </p>
+                </div>
+              </div>
               <button
+                className="admin-modal-close-btn"
                 onClick={() => setSelectedItem(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                aria-label="Close Modal"
+                type="button"
               >
-                <X className="h-4 w-4" />
+                <X style={{ width: 16, height: 16 }} />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">Content ID</span>
-                <p className="font-mono text-slate-900 dark:text-white mt-0.5 break-all">{selectedItem.id}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">SHA-256 Hash</span>
-                <p className="hash-font text-slate-900 dark:text-slate-200 break-all mt-0.5">{selectedItem.sha256_hash}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <span className="text-slate-400 font-semibold text-[10px] uppercase">Perceptual Hashes</span>
-                <p className="hash-font text-slate-900 dark:text-slate-200 break-all mt-0.5">
-                  {JSON.stringify(selectedItem.perceptual_hash)}
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "12px" }}>
+              <div style={{ padding: "12px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                  Content Record ID
+                </span>
+                <p style={{ fontFamily: "monospace", fontWeight: 700, marginTop: "2px", wordBreak: "break-all" }}>
+                  {selectedItem.id}
                 </p>
+              </div>
+
+              <div style={{ padding: "12px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    SHA-256 Cryptographic Hash
+                  </span>
+                  <button
+                    onClick={() => handleCopyHash(selectedItem.sha256_hash)}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--brand-primary)", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700 }}
+                    type="button"
+                  >
+                    {copiedHash ? <Check style={{ width: 12, height: 12 }} /> : <Copy style={{ width: 12, height: 12 }} />}
+                    <span>{copiedHash ? "Copied" : "Copy"}</span>
+                  </button>
+                </div>
+                <p style={{ fontFamily: "monospace", fontWeight: 600, marginTop: "4px", wordBreak: "break-all", color: "var(--brand-dark)" }}>
+                  {selectedItem.sha256_hash}
+                </p>
+              </div>
+
+              <div style={{ padding: "12px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                  Perceptual Hash Embeddings
+                </span>
+                <pre style={{ fontFamily: "monospace", fontSize: "11px", background: "#ffffff", padding: "10px", borderRadius: "8px", border: "1px solid var(--border-subtle)", marginTop: "4px", overflowX: "auto" }}>
+                  {JSON.stringify(selectedItem.perceptual_hash, null, 2) || "None"}
+                </pre>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ padding: "10px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    Publisher ID
+                  </span>
+                  <p style={{ fontFamily: "monospace", fontSize: "11px", marginTop: "2px" }}>
+                    {selectedItem.publisher_id || "-"}
+                  </p>
+                </div>
+                <div style={{ padding: "10px", borderRadius: "12px", background: "#f8faf9", border: "1px solid var(--border-subtle)" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    File Size &amp; MIME
+                  </span>
+                  <p style={{ fontSize: "11px", marginTop: "2px", fontWeight: 600 }}>
+                    {selectedItem.file_size ? `${(selectedItem.file_size / 1024).toFixed(1)} KB` : "-"} • {selectedItem.mime_type || "-"}
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
               <button
+                className="admin-btn-primary"
                 onClick={() => setSelectedItem(null)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-navy-800 text-white text-xs font-semibold hover:bg-navy-700 min-h-[40px]"
+                type="button"
               >
                 Close
               </button>
@@ -207,6 +290,6 @@ export default function AdminContentPage() {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

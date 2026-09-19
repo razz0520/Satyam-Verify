@@ -22,7 +22,7 @@ from PIL import Image
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.models.database import HashChainEntry
+from app.models.database import HashChainEntry, RegisteredContent
 
 logger = logging.getLogger(__name__)
 
@@ -273,17 +273,20 @@ class PerceptualHashService:
             cap.release()
 
     @staticmethod
-    def generate_audio_fingerprint(audio_path: Union[str, Path, bytes], max_duration_s: float = 300.0) -> str:
+    def generate_audio_fingerprint_dict(
+        audio_path: Union[str, Path, bytes],
+        max_duration_s: float = 300.0,
+    ) -> Dict[str, Any]:
         """
-        Generate an acoustic fingerprint for an audio file using librosa with bounded duration.
-        Extracts chroma and MFCC feature signatures robust against compression.
+        Generate a rich acoustic fingerprint dictionary containing normalized Chroma and MFCC
+        temporal mean vectors, robust against acoustic compression, together with a legacy SHA-256 hash.
 
         Args:
             audio_path: File path or raw audio bytes.
             max_duration_s: Maximum duration to process in seconds (default 300s).
 
         Returns:
-            Hexadecimal acoustic fingerprint string.
+            Dictionary containing acoustic feature vectors, legacy hash, and metadata.
         """
         try:
             import librosa
@@ -294,7 +297,6 @@ class PerceptualHashService:
                 y, sr = sf.read(audio_io)
                 if y.ndim > 1:
                     y = np.mean(y, axis=1)
-                # Cap duration
                 max_samples = int(sr * max_duration_s)
                 if len(y) > max_samples:
                     y = y[:max_samples]
@@ -302,22 +304,152 @@ class PerceptualHashService:
                 y, sr = librosa.load(str(audio_path), sr=22050, mono=True, duration=max_duration_s)
 
             if len(y) == 0:
-                return "0" * 64
+                return {
+                    "media_type": "AUDIO",
+                    "status": "AVAILABLE",
+                    "fingerprint_version": 2,
+                    "algorithm": "MFCC + Chroma Acoustic Vectors",
+                    "audio_fingerprint": "0" * 64,
+                    "chroma_mean": [0.0] * 12,
+                    "mfcc_mean": [0.0] * 13,
+                }
 
             chroma = librosa.feature.chroma_stft(y=y, sr=sr, n_chroma=12)
             mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
 
-            chroma_mean = np.mean(chroma, axis=1)
-            mfcc_mean = np.mean(mfcc, axis=1)
-            features = np.concatenate([chroma_mean, mfcc_mean])
+            chroma_mean = [float(x) for x in np.mean(chroma, axis=1)]
+            mfcc_mean = [float(x) for x in np.mean(mfcc, axis=1)]
 
-            feature_bytes = features.astype(np.float32).tobytes()
-            return hashlib.sha256(feature_bytes).hexdigest()
+            features = np.concatenate([np.array(chroma_mean, dtype=np.float32), np.array(mfcc_mean, dtype=np.float32)])
+            feature_bytes = features.tobytes()
+            raw_hash = hashlib.sha256(feature_bytes).hexdigest()
+
+            return {
+                "media_type": "AUDIO",
+                "status": "AVAILABLE",
+                "fingerprint_version": 2,
+                "algorithm": "MFCC + Chroma Acoustic Vectors",
+                "audio_fingerprint": raw_hash,
+                "chroma_mean": chroma_mean,
+                "mfcc_mean": mfcc_mean,
+            }
         except Exception as e:
-            logger.error("Error generating audio fingerprint: %s", e)
-            if isinstance(audio_path, (bytes, bytearray)):
-                return calculate_bytes_hash(audio_path)
-            return calculate_file_hash(audio_path)
+            logger.error("Error generating audio fingerprint dict: %s", e)
+            fallback_hash = (
+                calculate_bytes_hash(audio_path)
+                if isinstance(audio_path, (bytes, bytearray))
+                else calculate_file_hash(audio_path)
+            )
+            return {
+                "media_type": "AUDIO",
+                "status": "FAILED",
+                "fingerprint_version": 2,
+                "algorithm": "MFCC + Chroma Acoustic Vectors",
+                "audio_fingerprint": fallback_hash,
+                "error": str(e),
+            }
+
+    @staticmethod
+    def generate_audio_fingerprint(audio_path: Union[str, Path, bytes], max_duration_s: float = 300.0) -> str:
+        """
+        Generate an acoustic fingerprint string for an audio file (legacy 64-hex SHA-256 representation).
+
+        Args:
+            audio_path: File path or raw audio bytes.
+            max_duration_s: Maximum duration to process in seconds (default 300s).
+
+        Returns:
+            Hexadecimal acoustic fingerprint string.
+        """
+        res = PerceptualHashService.generate_audio_fingerprint_dict(audio_path, max_duration_s)
+        return str(res.get("audio_fingerprint", "0" * 64))
+
+    @classmethod
+    def compare_audio_fingerprints(
+        cls,
+        fp1: Union[Dict[str, Any], str],
+        fp2: Union[Dict[str, Any], str],
+    ) -> float:
+        """
+        Compare two audio fingerprints and return a bounded acoustic similarity percentage (0.0 to 100.0).
+        Uses weighted Chroma cosine similarity (harmonic pitch profile) and MFCC spectral envelope shape
+        together with normalized Euclidean feature distance.
+        Gracefully handles legacy 64-hex strings and degenerate inputs.
+
+        Args:
+            fp1: First audio fingerprint dictionary or legacy hex string.
+            fp2: Second audio fingerprint dictionary or legacy hex string.
+
+        Returns:
+            Similarity percentage (0.0 to 100.0).
+        """
+        try:
+            # Handle string inputs (legacy 64-hex SHA-256 strings)
+            if isinstance(fp1, str) and isinstance(fp2, str):
+                s1 = fp1.strip().lower()
+                s2 = fp2.strip().lower()
+                if s1 == s2 and len(s1) > 0:
+                    return 100.0
+                return 0.0
+
+            d1 = fp1 if isinstance(fp1, dict) else {}
+            d2 = fp2 if isinstance(fp2, dict) else {}
+
+            if d1.get("status") == "FAILED" or d2.get("status") == "FAILED":
+                return 0.0
+
+            c1_list = d1.get("chroma_mean")
+            m1_list = d1.get("mfcc_mean")
+            c2_list = d2.get("chroma_mean")
+            m2_list = d2.get("mfcc_mean")
+
+            # Vector-based acoustic comparison
+            if c1_list and m1_list and c2_list and m2_list:
+                c1 = np.array(c1_list, dtype=np.float64)
+                c2 = np.array(c2_list, dtype=np.float64)
+                m1 = np.array(m1_list, dtype=np.float64)
+                m2 = np.array(m2_list, dtype=np.float64)
+
+                # Chroma Cosine Similarity (harmonic pitch distribution)
+                norm_c1 = float(np.linalg.norm(c1))
+                norm_c2 = float(np.linalg.norm(c2))
+                if norm_c1 == 0.0 or norm_c2 == 0.0:
+                    sim_c = 100.0 if norm_c1 == norm_c2 else 0.0
+                else:
+                    sim_c = float(np.clip((np.dot(c1, c2) / (norm_c1 * norm_c2)) * 100.0, 0.0, 100.0))
+
+                # MFCC Similarity (spectral envelope excluding DC energy)
+                m1_sub = m1[1:] if len(m1) > 1 else m1
+                m2_sub = m2[1:] if len(m2) > 1 else m2
+                norm_m1 = float(np.linalg.norm(m1_sub))
+                norm_m2 = float(np.linalg.norm(m2_sub))
+                if norm_m1 == 0.0 or norm_m2 == 0.0:
+                    sim_m = 100.0 if norm_m1 == norm_m2 else 0.0
+                else:
+                    cos_m = float(np.dot(m1_sub, m2_sub) / (norm_m1 * norm_m2))
+                    sim_m = float(np.clip(max(0.0, cos_m) * 100.0, 0.0, 100.0))
+
+                # Normalized Euclidean metric distance
+                feat1 = np.concatenate([c1 / (norm_c1 or 1.0), m1_sub / (norm_m1 or 1.0)])
+                feat2 = np.concatenate([c2 / (norm_c2 or 1.0), m2_sub / (norm_m2 or 1.0)])
+                dist = float(np.linalg.norm(feat1 - feat2))
+                sim_dist = float(np.clip((1.0 - (dist / 2.0)) * 100.0, 0.0, 100.0))
+
+                score = (sim_c * 0.35) + (sim_m * 0.35) + (sim_dist * 0.30)
+                return round(float(np.clip(score, 0.0, 100.0)), 2)
+
+            # Legacy fallback: compare raw audio_fingerprint hashes if vectors are absent
+            afp1 = d1.get("audio_fingerprint") if isinstance(d1, dict) else (fp1 if isinstance(fp1, str) else None)
+            afp2 = d2.get("audio_fingerprint") if isinstance(d2, dict) else (fp2 if isinstance(fp2, str) else None)
+            if afp1 and afp2:
+                s1 = str(afp1).strip().lower()
+                s2 = str(afp2).strip().lower()
+                if s1 and s2 and s1 == s2 and s1 != "{}":
+                    return 100.0
+            return 0.0
+        except Exception as e:
+            logger.warning("Error comparing audio fingerprints: %s", e)
+            return 0.0
 
     @classmethod
     def compare_perceptual_hashes(
@@ -617,8 +749,10 @@ generate_image_phash = PerceptualHashService.generate_image_phash
 generate_image_dhash = PerceptualHashService.generate_image_dhash
 generate_video_phash = PerceptualHashService.generate_video_phash
 generate_audio_fingerprint = PerceptualHashService.generate_audio_fingerprint
+generate_audio_fingerprint_dict = PerceptualHashService.generate_audio_fingerprint_dict
 generate_pdf_fingerprint = PerceptualHashService.generate_pdf_fingerprint
 compare_perceptual_hashes = PerceptualHashService.compare_perceptual_hashes
+compare_audio_fingerprints = PerceptualHashService.compare_audio_fingerprints
 compare_pdf_fingerprints = PerceptualHashService.compare_pdf_fingerprints
 
 
@@ -668,6 +802,36 @@ class HashChainService:
         return hashlib.sha256(raw).hexdigest()
 
     @classmethod
+    def _build_canonical_data(
+        cls,
+        db: Session,
+        content_id: Union[str, uuid.UUID],
+        data: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Optional[Union[str, Dict[str, Any]]]:
+        """Build deterministic canonical data payload for a registered content record."""
+        if data is not None and isinstance(data, dict) and "sha256" in data:
+            return data
+
+        cid = uuid.UUID(str(content_id)) if isinstance(content_id, str) else content_id
+        content = db.execute(
+            select(RegisteredContent).where(RegisteredContent.id == cid)
+        ).scalar_one_or_none()
+
+        if content:
+            sig = (
+                content.manifest.digital_signature[:16] + "..."
+                if (content.manifest and content.manifest.digital_signature)
+                else "..."
+            )
+            return {
+                "sha256": content.sha256_hash,
+                "publisher_id": str(content.publisher_id),
+                "original_filename": content.original_filename,
+                "signature": sig,
+            }
+        return data
+
+    @classmethod
     def add_block(
         cls,
         db: Session,
@@ -686,6 +850,7 @@ class HashChainService:
             Created HashChainEntry instance.
         """
         cid = uuid.UUID(str(content_id)) if isinstance(content_id, str) else content_id
+        canonical_data = cls._build_canonical_data(db, cid, data)
 
         latest_entry = db.execute(
             select(HashChainEntry).order_by(desc(HashChainEntry.id)).limit(1)
@@ -698,7 +863,7 @@ class HashChainService:
             prev_hash=prev_hash,
             content_id=cid,
             timestamp=timestamp,
-            data_payload=data,
+            data_payload=canonical_data,
         )
 
         entry = HashChainEntry(
@@ -718,6 +883,9 @@ class HashChainService:
     def verify_chain(cls, db: Session) -> Tuple[bool, Optional[int]]:
         """
         Verify the complete integrity of the hash chain from genesis to head.
+        Verifies both:
+        1. Link integrity (entry.prev_hash == expected_prev_hash)
+        2. Block integrity (entry.current_hash == recalculated_current_hash)
 
         Args:
             db: SQLAlchemy database session.
@@ -735,6 +903,7 @@ class HashChainService:
         expected_prev_hash = cls.create_genesis_block()
 
         for idx, entry in enumerate(entries):
+            # 1. Link integrity check
             if entry.prev_hash != expected_prev_hash:
                 logger.error(
                     "Hash chain linkage broken at entry ID %d! Expected prev_hash: %s, got: %s",
@@ -744,9 +913,96 @@ class HashChainService:
                 )
                 return False, entry.id
 
+            # 2. Block intra-integrity check (recompute expected current_hash)
+            canonical_data = cls._build_canonical_data(db, entry.content_id)
+            expected_current_hash = cls.calculate_block_hash(
+                prev_hash=entry.prev_hash,
+                content_id=entry.content_id,
+                timestamp=entry.timestamp,
+                data_payload=canonical_data,
+            )
+
+            if entry.current_hash != expected_current_hash:
+                logger.error(
+                    "Hash chain block integrity broken at entry ID %d! Expected current_hash: %s, got: %s",
+                    entry.id,
+                    expected_current_hash,
+                    entry.current_hash,
+                )
+                return False, entry.id
+
             expected_prev_hash = entry.current_hash
 
         return True, None
+
+    @classmethod
+    def verify_candidate_block(
+        cls,
+        db: Session,
+        content_id: Union[str, uuid.UUID],
+    ) -> Tuple[bool, Optional[int]]:
+        """
+        Verify the cryptographic integrity of the hash chain block belonging to a specific candidate content.
+
+        Performs candidate-scoped validation:
+        1. Confirms the candidate has a registered HashChainEntry.
+        2. Validates block intra-integrity: recalculates expected current_hash from its stored prev_hash,
+           content_id, timestamp, and canonical data payload.
+        3. Validates linkage with the immediately preceding block (or genesis if first block).
+
+        Args:
+            db: SQLAlchemy database session.
+            content_id: UUID or string ID of the candidate registered content.
+
+        Returns:
+            Tuple of (is_valid: bool, block_id: Optional[int]).
+        """
+        cid = uuid.UUID(str(content_id)) if isinstance(content_id, str) else content_id
+        entry = db.execute(
+            select(HashChainEntry).where(HashChainEntry.content_id == cid)
+        ).scalar_one_or_none()
+
+        if not entry:
+            logger.error("No hash chain entry found for candidate content %s", cid)
+            return False, None
+
+        # 1. Verify link with immediate predecessor
+        predecessor = db.execute(
+            select(HashChainEntry)
+            .where(HashChainEntry.id < entry.id)
+            .order_by(desc(HashChainEntry.id))
+            .limit(1)
+        ).scalar_one_or_none()
+
+        expected_prev_hash = predecessor.current_hash if predecessor else cls.create_genesis_block()
+        if entry.prev_hash != expected_prev_hash:
+            logger.error(
+                "Candidate block ID %d prev_hash linkage broken! Expected: %s, got: %s",
+                entry.id,
+                expected_prev_hash,
+                entry.prev_hash,
+            )
+            return False, entry.id
+
+        # 2. Verify block intra-integrity (recompute expected current_hash)
+        canonical_data = cls._build_canonical_data(db, entry.content_id)
+        expected_current_hash = cls.calculate_block_hash(
+            prev_hash=entry.prev_hash,
+            content_id=entry.content_id,
+            timestamp=entry.timestamp,
+            data_payload=canonical_data,
+        )
+
+        if entry.current_hash != expected_current_hash:
+            logger.error(
+                "Candidate block ID %d integrity broken! Expected current_hash: %s, got: %s",
+                entry.id,
+                expected_current_hash,
+                entry.current_hash,
+            )
+            return False, entry.id
+
+        return True, entry.id
 
     @classmethod
     def get_chain_state(cls, db: Session) -> Dict[str, Any]:
@@ -794,5 +1050,7 @@ class HashChainService:
 create_genesis_block = HashChainService.create_genesis_block
 add_block = HashChainService.add_block
 verify_chain = HashChainService.verify_chain
+verify_candidate_block = HashChainService.verify_candidate_block
 get_chain_state = HashChainService.get_chain_state
 detect_tampering = HashChainService.detect_tampering
+

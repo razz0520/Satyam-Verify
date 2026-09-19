@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     TEMP_DIR: str = "uploads/temp"
     PROCESSED_DIR: str = "uploads/processed"
 
+    # Cloud Storage (Amazon S3)
+    S3_ENABLED: bool = False
+    S3_BUCKET_NAME: str = "satyam-verify-official-152732246723"
+    AWS_REGION: str = "ap-south-1"
+
     # API Configuration
     API_V1_PREFIX: str = "/api/v1"
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
