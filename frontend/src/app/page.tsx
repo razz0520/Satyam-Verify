@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useAuthStore } from "@/services/authStore";
 import { api } from "@/services/api";
 import { toast } from "sonner";
-import { EvidenceMatrix, EvidenceData } from "@/components/EvidenceMatrix";
+import { CitizenVerificationResult, CitizenEvidenceData } from "@/components/CitizenVerificationResult";
 
 type ContentTabType = "video" | "audio" | "pdf" | "text";
 
@@ -37,7 +37,7 @@ export default function HomePage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [textContent, setTextContent] = useState("");
   const [verifying, setVerifying] = useState(false);
-  const [result, setResult] = useState<EvidenceData | null>(null);
+  const [result, setResult] = useState<CitizenEvidenceData | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
   // Element Refs for Parallax & Animations
@@ -1208,7 +1208,7 @@ export default function HomePage() {
               {/* Verification Results Display */}
               {result && (
                 <div style={{ marginTop: "24px" }}>
-                  <EvidenceMatrix data={result} />
+                  <CitizenVerificationResult data={result} />
                 </div>
               )}
             </div>
