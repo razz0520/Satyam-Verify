@@ -281,9 +281,70 @@ def verify_token(token: str, expected_type: Optional[str] = "access") -> Dict[st
     return payload
 
 
+def create_google_registration_token(
+    email: str,
+    google_id: str,
+    name: Optional[str] = None,
+    expires_minutes: int = 10,
+) -> str:
+    """
+    Create a short-lived signed JWT for binding a verified Google identity to a new registration.
+
+    Args:
+        email: Verified Google email.
+        google_id: Verified Google subject identifier.
+        name: Verified Google display name.
+        expires_minutes: Expiration in minutes (default: 10).
+
+    Returns:
+        Signed JWT string with type='google_registration'.
+    """
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=expires_minutes)
+    token_jti = str(uuid.uuid4())
+
+    to_encode = {
+        "sub": str(google_id),
+        "email": email.strip().lower(),
+        "google_id": str(google_id),
+        "name": name or "",
+        "type": "google_registration",
+        "jti": token_jti,
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp()),
+    }
+
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def verify_google_registration_token(token: str) -> Dict[str, Any]:
+    """
+    Verify and decode a Google registration token.
+
+    Args:
+        token: JWT string.
+
+    Returns:
+        Decoded payload containing verified email and google_id.
+
+    Raises:
+        ValueError: If token is invalid, expired, or not of type 'google_registration'.
+    """
+    payload = decode_token(token, verify_exp=True)
+
+    if payload.get("type") != "google_registration":
+        raise ValueError("Invalid token type. Expected 'google_registration'")
+
+    if not payload.get("email") or not payload.get("google_id"):
+        raise ValueError("Registration token is missing verified email or google_id")
+
+    return payload
+
+
 # ============================================================================
 # 3. Google OAuth Service
 # ============================================================================
+
 
 def get_google_auth_url(
     state: Optional[str] = None,

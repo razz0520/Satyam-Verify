@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/services/authStore";
 import { api } from "@/services/api";
 import { toast } from "sonner";
@@ -14,10 +14,12 @@ import {
   Key,
   Eye,
   EyeOff,
+  Loader2,
 } from "lucide-react";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setAuth } = useAuthStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,6 +29,66 @@ export default function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaUserId, setMfaUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [oauthProcessing, setOauthProcessing] = useState(false);
+  const processedCodeRef = useRef<string | null>(null);
+
+  // Handle Google OAuth callback code from query params
+  useEffect(() => {
+    const code = searchParams.get("code");
+    const error = searchParams.get("error");
+
+    if (error) {
+      toast.error(`Google authentication failed: ${error}`);
+      return;
+    }
+
+    if (code && processedCodeRef.current !== code) {
+      processedCodeRef.current = code;
+      setOauthProcessing(true);
+
+      const exchangeCode = async () => {
+        try {
+          const redirect_uri = `${window.location.origin}/login`;
+          const res = await api.post("/auth/google", {
+            code,
+            redirect_uri,
+          });
+
+          if (res.data.google_link_required) {
+            toast.error(
+              res.data.message ||
+                "An account already exists with this email. Sign in with your password first to securely link Google."
+            );
+            if (res.data.email) setEmail(res.data.email);
+          } else if (res.data.registered) {
+            const { access_token, refresh_token, user } = res.data;
+            setAuth(user, access_token, refresh_token);
+            toast.success("Welcome back!");
+            router.push(user.role === "ADMIN" ? "/admin/dashboard" : "/dashboard");
+          } else {
+            if (res.data.registration_token) {
+              sessionStorage.setItem("google_registration_token", res.data.registration_token);
+            }
+            toast.info("Google authentication verified. Please complete your publisher registration.");
+            const query = new URLSearchParams();
+            if (res.data.email) query.set("email", res.data.email);
+            if (res.data.name) query.set("name", res.data.name);
+            router.push(`/register?${query.toString()}`);
+          }
+        } catch (err: any) {
+          console.error("OAuth exchange error:", err);
+          toast.error(
+            err.response?.data?.message ||
+              "Google authentication failed. Please try again or sign in with password."
+          );
+        } finally {
+          setOauthProcessing(false);
+        }
+      };
+
+      exchangeCode();
+    }
+  }, [searchParams, router, setAuth]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,12 +134,17 @@ export default function LoginPage() {
 
   const handleGoogleAuth = async () => {
     try {
-      const res = await api.get("/auth/google");
+      const redirect_uri = `${window.location.origin}/login`;
+      const res = await api.get("/auth/google", {
+        params: { redirect_uri },
+      });
       if (res.data.url) {
         window.location.href = res.data.url;
       }
     } catch (err: any) {
-      toast.error("Failed to initiate Google OAuth.");
+      toast.error(
+        err.response?.data?.message || "Failed to initiate Google OAuth."
+      );
     }
   };
 
@@ -106,173 +173,199 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Login Form */}
-        <form onSubmit={handleLogin} className="space-y-4 sm:space-y-5">
-          {!mfaRequired ? (
-            <>
-              {/* Email / Username Field */}
-              <div>
-                <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
-                  Official Email Address
-                </label>
-                <div className="relative">
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="publisher@pib.gov.in"
-                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
-                  />
-                </div>
-              </div>
+        {oauthProcessing ? (
+          <div className="py-12 flex flex-col items-center justify-center space-y-4">
+            <Loader2 className="w-10 h-10 text-sky-500 animate-spin" />
+            <p className="text-sm font-medium text-[#55565a] dark:text-slate-300">
+              Verifying Google authorization...
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Login Form */}
+            <form onSubmit={handleLogin} className="space-y-4 sm:space-y-5">
+              {!mfaRequired ? (
+                <>
+                  {/* Email / Username Field */}
+                  <div>
+                    <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
+                      Official Email Address
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="publisher@pib.gov.in"
+                        className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                      />
+                    </div>
+                  </div>
 
-              {/* Password Field */}
-              <div>
-                <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
-                  Password
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter Password"
-                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] pl-4 sm:pl-5 pr-11 sm:pr-12 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    className="absolute right-3.5 sm:right-4 text-[#8a8a8a] hover:text-[#55565a] dark:text-slate-400 dark:hover:text-slate-200 focus:outline-none transition-colors"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
-                    ) : (
-                      <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Remember Me & Forgot Password Row */}
-              <div className="flex items-center justify-between pt-1 pb-1 gap-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <button
-                    type="button"
-                    onClick={() => setRememberMe(!rememberMe)}
-                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-[6px] sm:rounded-[7px] flex items-center justify-center transition-all flex-shrink-0 ${
-                      rememberMe
-                        ? "bg-[#6e6e6e] dark:bg-navy-700 text-white shadow-[2px_2px_5px_#c7c5c1,-2px_-2px_5px_#ffffff] dark:shadow-[2px_2px_5px_#060a17,-2px_-2px_5px_#1f305e]"
-                        : "bg-[#ffffff] dark:bg-slate-800 shadow-[3px_3px_6px_#c7c5c1,-3px_-3px_6px_#ffffff] dark:shadow-[3px_3px_6px_#060a17,-3px_-3px_6px_#1f305e]"
-                    }`}
-                  >
-                    {rememberMe && (
-                      <svg
-                        className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-current"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                  {/* Password Field */}
+                  <div>
+                    <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
+                      Password
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter Password"
+                        className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] pl-4 sm:pl-5 pr-11 sm:pr-12 text-sm sm:text-sm text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        className="absolute right-3.5 sm:right-4 text-[#8a8a8a] hover:text-[#55565a] dark:text-slate-400 dark:hover:text-slate-200 focus:outline-none transition-colors"
                       >
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    )}
-                  </button>
-                  <span className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400">
-                    Remember me
-                  </span>
-                </label>
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                        ) : (
+                          <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
 
-                <span className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400 hover:text-[#3a3b3e] dark:hover:text-white transition-colors cursor-pointer">
-                  Forgot password?
-                </span>
-              </div>
-            </>
-          ) : (
-            /* MFA Verification Step */
-            <div className="space-y-3">
-              <div className="p-3.5 sm:p-4 rounded-[20px] sm:rounded-[22px] bg-[#e6e4e0] dark:bg-[#101a35] shadow-[inset_3px_3px_6px_#c7c5c1,inset_-3px_-3px_6px_#ffffff] dark:shadow-[inset_3px_3px_6px_#050812,inset_-3px_-3px_6px_#1b2746] text-xs text-[#55565a] dark:text-slate-300 flex items-start gap-2.5 sm:gap-3 border border-white/30 dark:border-slate-800">
-                <Key className="w-4 h-4 text-[#6e6e6e] dark:text-sky-400 flex-shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  Enter your <strong>6-digit Authenticator TOTP code</strong> to verify two-factor administrative authorization.
-                </p>
-              </div>
+                  {/* Remember Me & Forgot Password Row */}
+                  <div className="flex items-center justify-between pt-1 pb-1 gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <button
+                        type="button"
+                        onClick={() => setRememberMe(!rememberMe)}
+                        className={`w-5 h-5 sm:w-6 sm:h-6 rounded-[6px] sm:rounded-[7px] flex items-center justify-center transition-all flex-shrink-0 ${
+                          rememberMe
+                            ? "bg-[#6e6e6e] dark:bg-navy-700 text-white shadow-[2px_2px_5px_#c7c5c1,-2px_-2px_5px_#ffffff] dark:shadow-[2px_2px_5px_#060a17,-2px_-2px_5px_#1f305e]"
+                            : "bg-[#ffffff] dark:bg-slate-800 shadow-[3px_3px_6px_#c7c5c1,-3px_-3px_6px_#ffffff] dark:shadow-[3px_3px_6px_#060a17,-3px_-3px_6px_#1f305e]"
+                        }`}
+                      >
+                        {rememberMe && (
+                          <svg
+                            className="w-3 h-3 sm:w-3.5 sm:h-3.5 stroke-current"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        )}
+                      </button>
+                      <span className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400">
+                        Remember me
+                      </span>
+                    </label>
 
-              <div>
-                <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
-                  6-Digit Multi-Factor Code
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    maxLength={6}
-                    required
-                    autoFocus
-                    value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value)}
-                    placeholder="123456"
-                    className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-center text-sm sm:text-base tracking-[0.3em] font-mono text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
-                  />
+                    <span className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400 hover:text-[#3a3b3e] dark:hover:text-white transition-colors cursor-pointer">
+                      Forgot password?
+                    </span>
+                  </div>
+                </>
+              ) : (
+                /* MFA Verification Step */
+                <div className="space-y-3">
+                  <div className="p-3.5 sm:p-4 rounded-[20px] sm:rounded-[22px] bg-[#e6e4e0] dark:bg-[#101a35] shadow-[inset_3px_3px_6px_#c7c5c1,inset_-3px_-3px_6px_#ffffff] dark:shadow-[inset_3px_3px_6px_#050812,inset_-3px_-3px_6px_#1b2746] text-xs text-[#55565a] dark:text-slate-300 flex items-start gap-2.5 sm:gap-3 border border-white/30 dark:border-slate-800">
+                    <Key className="w-4 h-4 text-[#6e6e6e] dark:text-sky-400 flex-shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      Enter your <strong>6-digit Authenticator TOTP code</strong> to verify two-factor administrative authorization.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[13px] sm:text-[14px] font-medium text-[#55565a] dark:text-slate-300 mb-1.5 pl-1">
+                      6-Digit Multi-Factor Code
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        maxLength={6}
+                        required
+                        autoFocus
+                        value={mfaCode}
+                        onChange={(e) => setMfaCode(e.target.value)}
+                        placeholder="123456"
+                        className="w-full h-12 sm:h-13 rounded-[22px] sm:rounded-[26px] bg-[#e6e4e0] dark:bg-[#0d162e] px-4 sm:px-5 text-center text-sm sm:text-base tracking-[0.3em] font-mono text-[#4a4a4a] dark:text-slate-100 placeholder-[#a7a6a2] dark:placeholder-slate-500 shadow-[inset_4px_4px_8px_#c7c5c1,inset_-4px_-4px_8px_#ffffff] dark:shadow-[inset_4px_4px_8px_#050812,inset_-4px_-4px_8px_#1b2746] border-none outline-none focus:ring-2 focus:ring-[#8a8a8a] dark:focus:ring-navy-400 transition-all"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Submit Sign In Button */}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-12 sm:h-14 rounded-[24px] sm:rounded-[28px] bg-[#6e6e6e] hover:bg-[#585858] dark:bg-navy-800 dark:hover:bg-navy-700 text-white font-medium text-sm sm:text-base shadow-[6px_6px_14px_#c7c5c1,-6px_-6px_14px_#ffffff] dark:shadow-[6px_6px_14px_#050812,-6px_-6px_14px_#192646] hover:shadow-[3px_3px_8px_#c7c5c1,-3px_-3px_8px_#ffffff] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? (
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <LogIn className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                    <span>{mfaRequired ? "Verify Code & Sign In" : "Sign In to Console"}</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            {/* Divider Text */}
+            <div className="my-5 sm:my-6 text-center">
+              <span className="text-xs sm:text-sm text-[#8a8a8a] dark:text-slate-500 font-normal">
+                or sign in with
+              </span>
             </div>
-          )}
 
-          {/* Submit Sign In Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full h-12 sm:h-14 rounded-[24px] sm:rounded-[28px] bg-[#6e6e6e] hover:bg-[#585858] dark:bg-navy-800 dark:hover:bg-navy-700 text-white font-medium text-sm sm:text-base shadow-[6px_6px_14px_#c7c5c1,-6px_-6px_14px_#ffffff] dark:shadow-[6px_6px_14px_#050812,-6px_-6px_14px_#192646] hover:shadow-[3px_3px_8px_#c7c5c1,-3px_-3px_8px_#ffffff] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 cursor-pointer"
-          >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <LogIn className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-                <span>{mfaRequired ? "Verify Code & Sign In" : "Sign In to Console"}</span>
-              </>
-            )}
-          </button>
-        </form>
+            {/* Social Authentication Button */}
+            <div className="flex justify-center mb-5 sm:mb-6">
+              <button
+                type="button"
+                onClick={handleGoogleAuth}
+                aria-label="Sign in with Google"
+                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#e6e4e0] dark:bg-[#162244] flex items-center justify-center shadow-[4px_4px_8px_#c9c7c3,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-[#f2f1ee] dark:border-slate-700 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+              >
+                <span className="font-bold text-lg sm:text-xl text-[#2c2c2c] dark:text-white font-serif">
+                  G
+                </span>
+              </button>
+            </div>
 
-        {/* Divider Text */}
-        <div className="my-5 sm:my-6 text-center">
-          <span className="text-xs sm:text-sm text-[#8a8a8a] dark:text-slate-500 font-normal">
-            or sign in with
-          </span>
-        </div>
-
-        {/* Social Authentication Button */}
-        <div className="flex justify-center mb-5 sm:mb-6">
-          <button
-            type="button"
-            onClick={handleGoogleAuth}
-            aria-label="Sign in with Google"
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#e6e4e0] dark:bg-[#162244] flex items-center justify-center shadow-[4px_4px_8px_#c9c7c3,-4px_-4px_8px_#ffffff] dark:shadow-[4px_4px_8px_#060a17,-4px_-4px_8px_#1f305e] border border-[#f2f1ee] dark:border-slate-700 hover:scale-105 active:scale-95 transition-all cursor-pointer"
-          >
-            <span className="font-bold text-lg sm:text-xl text-[#2c2c2c] dark:text-white font-serif">
-              G
-            </span>
-          </button>
-        </div>
-
-        {/* Bottom Navigation Row: Register Organization link */}
-        <div className="text-center pt-3 sm:pt-2 border-t border-black/5 dark:border-white/5">
-          <p className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400">
-            Need a new publisher account?{" "}
-            <Link
-              href="/register"
-              className="font-semibold text-[#3a3b3e] dark:text-sky-400 hover:underline inline-block mt-0.5 sm:mt-0 sm:ml-1"
-            >
-              Register Organization
-            </Link>
-          </p>
-        </div>
+            {/* Bottom Navigation Row: Register Organization link */}
+            <div className="text-center pt-3 sm:pt-2 border-t border-black/5 dark:border-white/5">
+              <p className="text-xs sm:text-[13px] text-[#6b6b6b] dark:text-slate-400">
+                Need a new publisher account?{" "}
+                <Link
+                  href="/register"
+                  className="font-semibold text-[#3a3b3e] dark:text-sky-400 hover:underline inline-block mt-0.5 sm:mt-0 sm:ml-1"
+                >
+                  Register Organization
+                </Link>
+              </p>
+            </div>
+          </>
+        )}
 
       </div>
     </div>
   );
 }
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#eceae6] dark:bg-[#0b132b] flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
+  );
+}
+

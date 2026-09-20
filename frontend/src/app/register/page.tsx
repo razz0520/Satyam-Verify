@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuthStore } from "@/services/authStore";
 import { api } from "@/services/api";
 import { toast } from "sonner";
 import {
@@ -10,10 +11,13 @@ import {
   UserPlus,
   Key,
   ArrowLeft,
+  Loader2,
 } from "lucide-react";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { setAuth } = useAuthStore();
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -23,8 +27,32 @@ export default function RegisterPage() {
     department: "",
     designation: "",
   });
+  const [registrationToken, setRegistrationToken] = useState<string | null>(null);
   const [agreeTerms, setAgreeTerms] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  // Pre-fill form if redirected from verified Google OAuth
+  useEffect(() => {
+    const emailParam = searchParams.get("email");
+    const nameParam = searchParams.get("name");
+
+    const savedToken = typeof window !== "undefined" ? sessionStorage.getItem("google_registration_token") : null;
+    if (savedToken) {
+      setRegistrationToken(savedToken);
+    }
+
+    if (emailParam || nameParam) {
+      setFormData((prev) => {
+        const domain = emailParam && emailParam.includes("@") ? emailParam.split("@")[1] : prev.organization_domain;
+        return {
+          ...prev,
+          email: emailParam || prev.email,
+          organization_name: nameParam || prev.organization_name,
+          organization_domain: domain || prev.organization_domain,
+        };
+      });
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +70,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await api.post("/auth/register", {
+      const res = await api.post("/auth/register", {
         email: formData.email.trim(),
         password: formData.password,
         organization_name: formData.organization_name.trim(),
@@ -50,10 +78,20 @@ export default function RegisterPage() {
           formData.organization_domain.trim() || formData.email.split("@")[1],
         department: formData.department.trim() || null,
         designation: formData.designation.trim() || null,
+        registration_token: registrationToken || null,
       });
 
-      toast.success("Publisher account successfully registered! Please sign in.");
-      router.push("/login");
+      if (res.data.access_token && res.data.refresh_token) {
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("google_registration_token");
+        }
+        setAuth(res.data, res.data.access_token, res.data.refresh_token);
+        toast.success("Publisher account successfully registered & authenticated!");
+        router.push(res.data.role === "ADMIN" ? "/admin/dashboard" : "/dashboard");
+      } else {
+        toast.success("Publisher account successfully registered! Please sign in.");
+        router.push("/login");
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(err.response?.data?.message || "Registration failed.");
@@ -64,12 +102,17 @@ export default function RegisterPage() {
 
   const handleGoogleAuth = async () => {
     try {
-      const res = await api.get("/auth/google");
+      const redirect_uri = `${window.location.origin}/login`;
+      const res = await api.get("/auth/google", {
+        params: { redirect_uri },
+      });
       if (res.data.url) {
         window.location.href = res.data.url;
       }
     } catch (err: any) {
-      toast.error("Failed to initiate Google OAuth.");
+      toast.error(
+        err.response?.data?.message || "Failed to initiate Google OAuth."
+      );
     }
   };
 
@@ -330,3 +373,18 @@ export default function RegisterPage() {
     </div>
   );
 }
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#eceae6] dark:bg-[#0b132b] flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-sky-500 animate-spin" />
+        </div>
+      }
+    >
+      <RegisterForm />
+    </Suspense>
+  );
+}
+

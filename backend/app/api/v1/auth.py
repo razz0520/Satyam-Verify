@@ -1,12 +1,14 @@
 """Authentication API Endpoints."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db, rate_limiter
 from app.core.security import (
+    create_access_token,
+    create_refresh_token,
     generate_backup_codes,
     generate_totp_secret,
     get_google_auth_url,
@@ -16,6 +18,7 @@ from app.core.security import (
 from app.models.database import User
 from app.schemas import (
     GoogleAuthRequest,
+    GoogleAuthResponse,
     LoginRequest,
     MessageResponse,
     MfaSetupResponse,
@@ -28,6 +31,7 @@ from app.schemas import (
 from app.services.auth_service import (
     authenticate_user,
     authenticate_with_google,
+    link_google_to_user,
     logout_user,
     refresh_tokens,
     register_publisher,
@@ -61,8 +65,14 @@ def register(
             organization_domain=domain,
             department=payload.department,
             designation=payload.designation,
+            registration_token=payload.registration_token,
         )
-        return user.to_dict()
+        user_dict = user.to_dict()
+        if payload.registration_token:
+            user_dict["access_token"] = create_access_token(user_id=user.id, role=user.role)
+            user_dict["refresh_token"] = create_refresh_token(user_id=user.id)
+            user_dict["token_type"] = "bearer"
+        return user_dict
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -99,15 +109,15 @@ def login(
     "/google",
     summary="Get Google OAuth authorization URL",
 )
-def google_auth_url() -> Dict[str, str]:
+def google_auth_url(redirect_uri: Optional[str] = None) -> Dict[str, str]:
     """Retrieve Google OAuth 2.0 redirect URL."""
-    url = get_google_auth_url()
+    url = get_google_auth_url(redirect_uri=redirect_uri)
     return {"url": url}
 
 
 @router.post(
     "/google",
-    response_model=TokenResponse,
+    response_model=GoogleAuthResponse,
     summary="Authenticate via Google OAuth authorization code",
 )
 def google_auth(
@@ -115,7 +125,7 @@ def google_auth(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Any:
-    """Exchange Google OAuth code for JWT session tokens."""
+    """Exchange Google OAuth code for JWT session tokens or registration token."""
     client_ip = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
 
@@ -137,8 +147,41 @@ def google_auth(
 
 
 @router.post(
+    "/google/link",
+    response_model=MessageResponse,
+    dependencies=[Depends(rate_limiter(max_requests=10, window_seconds=60))],
+    summary="Link Google account to authenticated user",
+)
+def link_google_account(
+    payload: GoogleAuthRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """Link verified Google account to the currently authenticated user."""
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    try:
+        result = link_google_to_user(
+            db=db,
+            current_user=current_user,
+            code=payload.code,
+            redirect_uri=payload.redirect_uri,
+            ip_address=client_ip,
+            user_agent=user_agent,
+        )
+        return MessageResponse(
+            message=result.get("message", "Google account linked successfully."),
+            success=True,
+            data=result,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post(
     "/google/callback",
-    response_model=TokenResponse,
+    response_model=GoogleAuthResponse,
     summary="Google OAuth callback handler",
 )
 def google_callback(

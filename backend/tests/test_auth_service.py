@@ -294,3 +294,119 @@ def test_user_and_role_management(db):
 
     reactivated = reactivate_user(db, user.id)
     assert reactivated.is_active is True
+
+
+def test_google_oauth_decision_tree_and_linking(db, monkeypatch):
+    """Test the 3-case Google login decision tree and account linking."""
+    from app.core.security import create_google_registration_token, verify_google_registration_token
+    from app.services.auth_service import authenticate_with_google, link_google_to_user
+
+    google_email_existing_linked = f"linked_{uuid.uuid4().hex[:6]}@pib.gov.in"
+    google_id_linked = f"gid_{uuid.uuid4().hex}"
+    
+    # Pre-create linked user
+    user_linked = register_publisher(
+        db=db,
+        email=google_email_existing_linked,
+        password="Password#123",
+        organization_name="PIB",
+        organization_domain="pib.gov.in",
+    )
+    user_linked.google_id = google_id_linked
+    db.commit()
+
+    # Pre-create unlinked password user (CASE 3)
+    unlinked_email = f"unlinked_{uuid.uuid4().hex[:6]}@pib.gov.in"
+    user_unlinked = register_publisher(
+        db=db,
+        email=unlinked_email,
+        password="Password#123",
+        organization_name="PIB",
+        organization_domain="pib.gov.in",
+    )
+    # google_id remains None
+
+    # Mock Google token exchange & profile fetch
+    def mock_exchange_code(code, redirect_uri=None):
+        return {"access_token": f"mock_at_{code}"}
+
+    def mock_get_user_info(access_token):
+        if access_token == "mock_at_linked":
+            return {"sub": google_id_linked, "email": google_email_existing_linked, "name": "Linked User"}
+        elif access_token == "mock_at_unlinked":
+            return {"sub": f"gid_new_{uuid.uuid4().hex[:6]}", "email": unlinked_email, "name": "Unlinked User"}
+        else:
+            return {"sub": f"gid_fresh_{uuid.uuid4().hex[:6]}", "email": f"new_{uuid.uuid4().hex[:6]}@pib.gov.in", "name": "New User"}
+
+    monkeypatch.setattr("app.services.auth_service.exchange_code_for_tokens", mock_exchange_code)
+    monkeypatch.setattr("app.services.auth_service.get_google_user_info", mock_get_user_info)
+
+    # CASE 1: Existing Google-linked user
+    res1 = authenticate_with_google(db, code="linked")
+    assert res1["registered"] is True
+    assert res1["google_link_required"] is False
+    assert "access_token" in res1
+    assert res1["user"]["email"] == google_email_existing_linked
+
+    # CASE 3: Existing unlinked password account (must NOT auto-link)
+    res3 = authenticate_with_google(db, code="unlinked")
+    assert res3["registered"] is True
+    assert res3["google_link_required"] is True
+    assert "access_token" not in res3 or res3.get("access_token") is None
+    assert "Sign in with your password first" in res3["message"]
+
+    # CASE 2: Genuinely new user (receives registration token)
+    res2 = authenticate_with_google(db, code="brand_new")
+    assert res2["registered"] is False
+    assert res2["google_link_required"] is False
+    assert "registration_token" in res2
+    assert res2["registration_token"] is not None
+
+    # Verify registration token payload
+    token_payload = verify_google_registration_token(res2["registration_token"])
+    assert token_payload["email"] == res2["email"]
+    assert token_payload["google_id"] == token_payload["sub"]
+
+    # Register new user with valid registration token
+    new_user = register_publisher(
+        db=db,
+        email=res2["email"],
+        password="NewPassword#123",
+        organization_name="New PIB",
+        organization_domain="pib.gov.in",
+        registration_token=res2["registration_token"],
+    )
+    assert new_user.google_id == token_payload["google_id"]
+    assert new_user.is_verified is False  # Preserves application is_verified semantics
+
+    # Tampering with email during registration fails
+    tampered_token = create_google_registration_token("original@pib.gov.in", "gid_123")
+    with pytest.raises(ValueError, match="does not match verified Google token"):
+        register_publisher(
+            db=db,
+            email="attacker@pib.gov.in",
+            password="Password#123",
+            organization_name="PIB",
+            organization_domain="pib.gov.in",
+            registration_token=tampered_token,
+        )
+
+    # Test Authenticated Google Account Linking for user_unlinked
+    mock_new_gid = f"gid_for_unlinked_{uuid.uuid4().hex}"
+    def mock_get_user_info_link(access_token):
+        return {"sub": mock_new_gid, "email": unlinked_email, "name": "Unlinked User"}
+    monkeypatch.setattr("app.services.auth_service.get_google_user_info", mock_get_user_info_link)
+
+    # Linking with matching email succeeds
+    link_res = link_google_to_user(db, user_unlinked, code="link_code")
+    assert link_res["google_id"] == mock_new_gid
+    assert user_unlinked.google_id == mock_new_gid
+
+    # Linking with mismatched email fails
+    def mock_mismatched_info(access_token):
+        return {"sub": "gid_mismatch", "email": "different@pib.gov.in", "name": "Diff"}
+    monkeypatch.setattr("app.services.auth_service.get_google_user_info", mock_mismatched_info)
+
+    with pytest.raises(ValueError, match="does not match your authenticated account email"):
+        link_google_to_user(db, user_unlinked, code="diff_code")
+

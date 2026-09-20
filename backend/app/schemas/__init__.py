@@ -53,6 +53,7 @@ class RegisterPublisherRequest(BaseModel):
     organization_domain: Optional[str] = None
     department: Optional[str] = None
     designation: Optional[str] = None
+    registration_token: Optional[str] = None
 
 
 class RegisterAdminRequest(BaseModel):
@@ -102,6 +103,11 @@ class UserResponse(BaseModel):
     mfa_enabled: bool
     login_count: int
     created_at: Optional[str] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_type: Optional[str] = None
+    google_id: Optional[str] = None
+    google_email: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -113,6 +119,24 @@ class TokenResponse(BaseModel):
     mfa_required: bool = False
     mfa_session_token: Optional[str] = None
     user: Optional[UserResponse] = None
+
+
+class GoogleAuthResponse(BaseModel):
+    registered: bool = True
+    google_link_required: bool = False
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_type: Optional[str] = "bearer"
+    mfa_required: bool = False
+    mfa_session_token: Optional[str] = None
+    user: Optional[UserResponse] = None
+    registration_token: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+    google_id: Optional[str] = None
+    message: Optional[str] = None
 
 
 class UpdateProfileRequest(BaseModel):

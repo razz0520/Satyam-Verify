@@ -16,6 +16,7 @@ from app.core.security import (
     blacklist_token,
     check_rate_limit,
     create_access_token,
+    create_google_registration_token,
     create_refresh_token,
     decode_token,
     exchange_code_for_tokens,
@@ -27,6 +28,7 @@ from app.core.security import (
     record_failed_login,
     reset_failed_logins,
     verify_google_id_token,
+    verify_google_registration_token,
     verify_password,
     verify_token,
     verify_totp,
@@ -55,9 +57,9 @@ ROLE_HIERARCHY: Dict[UserRole, int] = {
 class AuthService:
     """Authentication and User Lifecycle Service."""
 
-    # ========================================================================
+    # =================================================================       
     # 1. Authentication Flow
-    # ========================================================================
+    # =================================================================       
 
     @classmethod
     def authenticate_user(
@@ -139,18 +141,6 @@ class AuthService:
         user.last_login_ip = ip_address
         user.login_count += 1
 
-        # Audit successful login
-        audit = AuditLog(
-            actor_id=user.id,
-            action="LOGIN_SUCCESS",
-            details={"email": clean_email, "mfa_enabled": user.mfa_enabled},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-        db.add(audit)
-        db.commit()
-        db.refresh(user)
-
         # Check MFA requirement
         if user.mfa_enabled and user.mfa_secret:
             mfa_session_token = create_access_token(
@@ -159,13 +149,38 @@ class AuthService:
                 expires_delta=timedelta(minutes=5),
                 extra_claims={"mfa_pending": True},
             )
+            audit = AuditLog(
+                actor_id=user.id,
+                action="MFA_PROMPT",
+                details={"email": clean_email},
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            db.add(audit)
+            db.commit()
+
             return {
                 "mfa_required": True,
                 "mfa_session_token": mfa_session_token,
                 "user_id": str(user.id),
+                "user": user.to_dict(),
+                "access_token": None,
+                "refresh_token": None,
+                "token_type": "bearer",
             }
 
-        # Generate tokens
+        # Issue JWT tokens
+        audit = AuditLog(
+            actor_id=user.id,
+            action="LOGIN_SUCCESS",
+            details={"email": clean_email},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        db.add(audit)
+        db.commit()
+        db.refresh(user)
+
         access_token = create_access_token(user_id=user.id, role=user.role)
         refresh_token = create_refresh_token(user_id=user.id)
 
@@ -248,17 +263,12 @@ class AuthService:
         user_agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Authenticate or register a user using Google OAuth 2.0 authorization code.
+        Authenticate a user using Google OAuth 2.0 with strict identity & account linking checks.
 
-        Args:
-            db: SQLAlchemy session.
-            code: Authorization code from Google.
-            redirect_uri: Redirect URI override.
-            ip_address: Client IP.
-            user_agent: Client User Agent.
-
-        Returns:
-            Dictionary with access_token, refresh_token, and user metadata.
+        Decision Tree:
+        1. CASE 1 - Existing user with matching google_id -> Normal login.
+        2. CASE 3 - Existing user with matching email but unlinked google_id -> Require password login & linking (DO NOT auto-link).
+        3. CASE 2 - Genuinely new user -> Issue short-lived signed registration token.
         """
         # Step 1: Exchange code for Google tokens
         token_data = exchange_code_for_tokens(code, redirect_uri=redirect_uri)
@@ -270,94 +280,88 @@ class AuthService:
         user_info = get_google_user_info(google_access_token)
         google_id = user_info.get("sub")
         email = user_info.get("email", "").strip().lower()
-        email_verified = user_info.get("email_verified", False)
+        name = user_info.get("name", "")
 
         if not email or not google_id:
             raise ValueError("Incomplete profile received from Google")
 
-        domain = email.split("@")[-1] if "@" in email else ""
-
-        # Step 3: Find existing user by google_id or email
-        user = db.execute(
-            select(User).where((User.google_id == google_id) | (User.email == email))
+        # Step 3: CASE 1 - Existing User matched by google_id
+        user_by_google_id = db.execute(
+            select(User).where(User.google_id == google_id)
         ).scalar_one_or_none()
 
-        if user:
-            # Link Google ID if missing
-            if not user.google_id:
-                user.google_id = google_id
-                user.google_email = email
-            if email_verified:
-                user.is_verified = True
-        else:
-            # Auto-provision new user based on Domain Whitelist
-            whitelist = db.execute(
-                select(DomainWhitelist).where(
-                    (DomainWhitelist.domain == domain) & (DomainWhitelist.is_active.is_(True))
-                )
-            ).scalar_one_or_none()
+        if user_by_google_id:
+            user = user_by_google_id
+            if not user.is_active:
+                raise ValueError("Account has been deactivated. Please contact an administrator.")
 
-            role = UserRole.VIEWER
-            if whitelist and whitelist.allowed_roles:
-                role_candidates = [UserRole(r) for r in whitelist.allowed_roles if r in UserRole.__members__]
-                role = role_candidates[0] if role_candidates else UserRole.PUBLISHER
+            now = datetime.now(timezone.utc)
+            user.last_login_at = now
+            user.last_login_ip = ip_address
+            user.login_count += 1
 
-            # Generate Ed25519 keys for the new user
-            _, pub_key = generate_ed25519_keypair()
-            pub_pem = serialize_public_key(pub_key)
-
-            user = User(
-                email=email,
-                google_id=google_id,
-                google_email=email,
-                role=role,
-                organization_name=domain.capitalize(),
-                organization_domain=domain,
-                public_key=pub_pem,
-                is_active=True,
-                is_verified=email_verified,
+            audit = AuditLog(
+                actor_id=user.id,
+                action="GOOGLE_LOGIN_SUCCESS",
+                details={"email": email, "google_id": google_id},
+                ip_address=ip_address,
+                user_agent=user_agent,
             )
-            db.add(user)
-            db.flush()
+            db.add(audit)
+            db.commit()
+            db.refresh(user)
 
-            # Create default primary credential for publisher
-            if role == UserRole.PUBLISHER:
-                now = datetime.now(timezone.utc)
-                cred = Credential(
-                    publisher_id=user.id,
-                    credential_type=CredentialType.PRIMARY,
-                    status=CredentialStatus.ACTIVE,
-                    valid_from=now,
-                    valid_until=now + timedelta(days=365),
-                )
-                db.add(cred)
+            access_token = create_access_token(user_id=user.id, role=user.role)
+            refresh_token = create_refresh_token(user_id=user.id)
 
-        # Update login tracking
-        now = datetime.now(timezone.utc)
-        user.last_login_at = now
-        user.last_login_ip = ip_address
-        user.login_count += 1
+            return {
+                "registered": True,
+                "google_link_required": False,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "mfa_required": False,
+                "user": user.to_dict(),
+            }
 
-        audit = AuditLog(
-            actor_id=user.id,
-            action="GOOGLE_LOGIN_SUCCESS",
-            details={"email": email, "google_id": google_id},
-            ip_address=ip_address,
-            user_agent=user_agent,
+        # Step 4: CASE 3 - Existing password account with matching email but unlinked google_id
+        user_by_email = db.execute(
+            select(User).where(User.email == email)
+        ).scalar_one_or_none()
+
+        if user_by_email:
+            # DO NOT auto-link unlinked accounts. Require password authentication first.
+            logger.warning(
+                "Google login attempt for unlinked account %s (Google ID: %s). Link required.",
+                email,
+                google_id,
+            )
+            return {
+                "registered": True,
+                "google_link_required": True,
+                "email": email,
+                "message": "An account already exists with this email. Sign in with your password first to securely link Google.",
+            }
+
+        # Step 5: CASE 2 - Genuinely New User
+        # Issue short-lived signed registration token (10 minutes)
+        registration_token = create_google_registration_token(
+            email=email,
+            google_id=google_id,
+            name=name,
+            expires_minutes=10,
         )
-        db.add(audit)
-        db.commit()
-        db.refresh(user)
 
-        access_token = create_access_token(user_id=user.id, role=user.role)
-        refresh_token = create_refresh_token(user_id=user.id)
-
+        logger.info("New Google user verified: %s, issued registration token", email)
         return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "mfa_required": False,
-            "user": user.to_dict(),
+            "registered": False,
+            "google_link_required": False,
+            "registration_token": registration_token,
+            "email": email,
+            "name": name,
+            "given_name": user_info.get("given_name") or "",
+            "family_name": user_info.get("family_name") or "",
+            "message": "Google authentication verified. Please complete publisher registration.",
         }
 
     @classmethod
@@ -446,9 +450,11 @@ class AuthService:
         organization_domain: str,
         department: Optional[str] = None,
         designation: Optional[str] = None,
+        registration_token: Optional[str] = None,
     ) -> User:
         """
         Register a new Publisher user with Ed25519 cryptographic keypair.
+        If a valid Google registration token is supplied, binds the verified google_id.
 
         Args:
             db: SQLAlchemy session.
@@ -458,6 +464,7 @@ class AuthService:
             organization_domain: Official organization domain (e.g., gov.in).
             department: Sub-department or division.
             designation: Official title/designation.
+            registration_token: Optional signed Google registration JWT.
 
         Returns:
             Created User instance.
@@ -465,7 +472,30 @@ class AuthService:
         clean_email = email.strip().lower()
         clean_domain = organization_domain.strip().lower()
 
-        # Check existing user
+        google_id: Optional[str] = None
+        google_email: Optional[str] = None
+
+        if registration_token:
+            token_payload = verify_google_registration_token(registration_token)
+            token_email = token_payload.get("email", "").strip().lower()
+            token_google_id = token_payload.get("google_id")
+
+            if clean_email != token_email:
+                raise ValueError(
+                    f"Registration email ({clean_email}) does not match verified Google token email ({token_email})"
+                )
+
+            # Ensure google_id is not already taken
+            existing_google = db.execute(
+                select(User).where(User.google_id == token_google_id)
+            ).scalar_one_or_none()
+            if existing_google:
+                raise ValueError("This Google account is already registered with another user")
+
+            google_id = token_google_id
+            google_email = token_email
+
+        # Check existing user by email
         existing = db.execute(select(User).where(User.email == clean_email)).scalar_one_or_none()
         if existing:
             raise ValueError(f"Email {clean_email} is already registered")
@@ -484,6 +514,8 @@ class AuthService:
             organization_domain=clean_domain,
             department=department.strip() if department else None,
             designation=designation.strip() if designation else None,
+            google_id=google_id,
+            google_email=google_email,
             public_key=pub_pem,
             is_active=True,
             is_verified=False,
@@ -506,14 +538,82 @@ class AuthService:
         audit = AuditLog(
             actor_id=user.id,
             action="USER_REGISTER_PUBLISHER",
-            details={"email": clean_email, "organization": organization_name},
+            details={
+                "email": clean_email,
+                "organization": organization_name,
+                "google_linked": bool(google_id),
+            },
         )
         db.add(audit)
         db.commit()
         db.refresh(user)
 
-        logger.info("Registered new publisher: %s (%s)", clean_email, user.id)
+        logger.info("Registered new publisher: %s (%s, Google linked: %s)", clean_email, user.id, bool(google_id))
         return user
+
+    @classmethod
+    def link_google_to_user(
+        cls,
+        db: Session,
+        current_user: User,
+        code: str,
+        redirect_uri: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Link a verified Google account to the currently authenticated application user.
+
+        Security checks:
+        1. Authorization code is exchanged with Google for tokens.
+        2. Google profile is fetched and verified.
+        3. Google email must match authenticated current_user.email (case-insensitive).
+        4. google_id must not already be linked to another user.
+        5. Saves google_id and google_email on current_user record.
+        """
+        token_data = exchange_code_for_tokens(code, redirect_uri=redirect_uri)
+        google_access_token = token_data.get("access_token")
+        if not google_access_token:
+            raise ValueError("Failed to retrieve access token from Google")
+
+        user_info = get_google_user_info(google_access_token)
+        google_id = user_info.get("sub")
+        email = user_info.get("email", "").strip().lower()
+
+        if not email or not google_id:
+            raise ValueError("Incomplete profile received from Google")
+
+        if current_user.email.strip().lower() != email:
+            raise ValueError(
+                f"Google account email ({email}) does not match your authenticated account email ({current_user.email})"
+            )
+
+        existing_google_user = db.execute(
+            select(User).where((User.google_id == google_id) & (User.id != current_user.id))
+        ).scalar_one_or_none()
+        if existing_google_user:
+            raise ValueError("This Google account is already linked to another account")
+
+        current_user.google_id = google_id
+        current_user.google_email = email
+
+        audit = AuditLog(
+            actor_id=current_user.id,
+            action="GOOGLE_ACCOUNT_LINKED",
+            details={"email": email, "google_id": google_id},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        db.add(audit)
+        db.commit()
+        db.refresh(current_user)
+
+        logger.info("Successfully linked Google ID %s to user %s", google_id, current_user.id)
+        return {
+            "message": "Google account linked successfully.",
+            "google_id": google_id,
+            "email": email,
+        }
 
     @classmethod
     def register_admin(
@@ -824,3 +924,5 @@ reactivate_user = AuthService.reactivate_user
 assign_role = AuthService.assign_role
 check_permission = AuthService.check_permission
 get_user_roles = AuthService.get_user_roles
+link_google_to_user = AuthService.link_google_to_user
+

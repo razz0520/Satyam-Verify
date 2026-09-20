@@ -13,6 +13,8 @@ export interface User {
   is_verified: boolean;
   mfa_enabled: boolean;
   login_count: number;
+  google_id?: string | null;
+  google_email?: string | null;
 }
 
 interface AuthState {
